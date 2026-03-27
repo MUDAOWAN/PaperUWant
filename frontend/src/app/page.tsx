@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import { useAuthStore } from "../store/authStore";
+import { usePaperStore } from "../store/paperStore";
 import {
   FileText,
   Search,
+  User,
   BookOpen,
   Sparkles,
   Send,
@@ -22,11 +25,15 @@ import {
   Square,
   Pencil,
   AlertTriangle,
+  LogOut,
+  FolderPlus,
+  Folder,
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import SmartNotesEditor, { SmartNotesEditorHandle } from "../components/SmartNotesEditor";
 import SettingsModal from "../components/SettingsModal";
+import FolderCreateModal from "../components/FolderCreateModal";
 import { SettingsProvider, useSettings } from "../contexts/SettingsContext";
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
@@ -54,57 +61,46 @@ function preprocessMarkdownContent(text: string): string {
     .replace(/\\\(\s*([\s\S]*?)\s*\\\)/g, '$$1$');
 }
 
-const mockPapers = [
-  {
-    id: 1,
-    title: "Attention Is All You Need",
-    authors: "Vaswani et al.",
-    icon: FileText,
-    selected: true,
-  },
-  {
-    id: 2,
-    title: "BERT: Pre-training of Deep Bidirectional Transformers",
-    authors: "Devlin et al.",
-    icon: FileText,
-    selected: false,
-  },
-  {
-    id: 3,
-    title: "GPT-4 Technical Report",
-    authors: "OpenAI",
-    icon: FileText,
-    selected: false,
-  },
-  {
-    id: 4,
-    title: "Llama 2: Open Foundation and Chat Models",
-    authors: "Touvron et al.",
-    icon: FileText,
-    selected: false,
-  },
-  {
-    id: 5,
-    title: "Retrieval-Augmented Generation for Knowledge-Intensive NLP",
-    authors: "Lewis et al.",
-    icon: FileText,
-    selected: false,
-  },
-];
 
 function HomeContent() {
-  const [papers] = useState(mockPapers);
-  const [selectedPaper, setSelectedPaper] = useState(1);
+  const { user } = useAuthStore();
+  const { papers, folders, currentPaper, setCurrentPaper, fetchFolders, fetchCloudPapers, isLoadingCloud, createFolder, clearPapers } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const [showApiKeyToast, setShowApiKeyToast] = useState(false);
   const [input, setInput] = useState("");
+  const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const notesEditorRef = useRef<SmartNotesEditorHandle>(null);
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
   const { apiKey, baseUrl, modelName, systemPrompt, openSettings } = useSettings();
+
+  // Logout handler
+  const handleLogout = async () => {
+    const { supabase } = await import("../lib/supabase");
+    await supabase.auth.signOut();
+    useAuthStore.getState().setUser(null);
+    useAuthStore.getState().setSession(null);
+    clearPapers();
+  };
+
+  // Create folder handler
+  const handleConfirmNewFolder = async (name: string) => {
+    if (user) {
+      await createFolder(name, user.id);
+    }
+    setIsNewFolderModalOpen(false);
+  };
+
+  // Fetch cloud papers & folders when user logs in
+  useEffect(() => {
+    if (user) {
+      fetchFolders(user.id);
+      fetchCloudPapers(user.id);
+    }
+  }, [user]);
 
   // @ts-ignore - AI SDK v6 API mismatch
   const { messages, sendMessage, status, stop } = useChat({
@@ -248,21 +244,46 @@ function HomeContent() {
             ) : (
               <div className="min-w-0 relative flex flex-col h-full bg-white rounded-r-2xl shadow-sm border border-slate-100 overflow-hidden">
                 {/* Logo 区域 */}
-                <div className="flex items-center gap-3 px-2 h-14 border-b border-slate-100 shrink-0">
+                <div className="flex items-center gap-2 px-2 h-14 border-b border-slate-100 shrink-0">
                   <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 to-purple-600 shadow-sm">
                     <BookOpen className="h-4 w-4 text-white" />
                   </div>
                   <span className="font-bold text-sm text-slate-900">文献库</span>
+                  {user ? (
+                    <>
+                      <div className="ml-2 w-2 h-2 rounded-full bg-green-500 shrink-0" />
+                      <span className="text-xs text-slate-500 truncate max-w-[80px]">
+                        {(user.user_metadata as any)?.username || user.email?.split("@")[0]}
+                      </span>
+                      <button
+                        onClick={handleLogout}
+                        className="ml-auto p-1 text-gray-400 hover:text-red-500 rounded-md transition-colors"
+                        title="退出登录"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => useAuthStore.getState().openAuthModal()}
+                        className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                      >
+                        <User className="h-3.5 w-3.5" />
+                        登录 / 注册
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={collapseLeft}
-                    className="ml-auto p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
+                    className="p-1 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-md transition-colors"
                     title="收起"
                   >
                     <PanelLeftClose className="h-4 w-4" />
                   </button>
                 </div>
 
-                {/* 搜索与上传区 */}
+                {/* 搜索与操作区 */}
                 <div className="p-4 shrink-0 space-y-3">
                   <div className="relative flex items-center rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 transition-colors focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50">
                     <Search className="mr-2 h-3.5 w-3.5 text-slate-400" />
@@ -276,36 +297,72 @@ function HomeContent() {
                     <UploadCloud className="h-3.5 w-3.5" />
                     添加文献
                   </button>
+                  <button
+                    onClick={() => setIsNewFolderModalOpen(true)}
+                    className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all"
+                  >
+                    <FolderPlus className="h-3.5 w-3.5" />
+                    新建文件夹
+                  </button>
                 </div>
 
-                {/* 文件列表 */}
-                <div className="flex-1 px-4 pb-4 space-y-1.5 overflow-y-auto min-w-0">
-                  {papers.map((paper) => {
-                    const Icon = paper.icon;
-                    const isSelected = selectedPaper === paper.id;
-                    return (
-                      <div
-                        key={paper.id}
-                        onClick={() => setSelectedPaper(paper.id)}
-                        className={`px-3 py-3 rounded-lg text-xs cursor-pointer transition-all duration-150 ${
-                          isSelected
-                            ? "bg-indigo-50 text-indigo-700 shadow-sm"
-                            : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-                        }`}
-                      >
-                        <div className="flex items-start gap-2.5">
-                          <Icon className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
-                          <div className="flex-1 min-w-0">
-                            <p className="truncate font-medium leading-snug">{paper.title}</p>
-                            <p className={`text-[10px] mt-0.5 ${isSelected ? "text-indigo-400" : "text-slate-400"}`}>
-                              {paper.authors}
-                            </p>
+                {/* 列表区 */}
+                {user && (
+                  <>
+                    {/* 文件夹列表 */}
+                    {folders.length > 0 && (
+                      <div className="px-4 pb-2">
+                        <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文件夹</p>
+                        {folders.map((folder) => (
+                          <div
+                            key={folder.id}
+                            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors"
+                          >
+                            <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                            <span className="truncate font-semibold">{folder.name}</span>
                           </div>
-                        </div>
+                        ))}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
+
+                    {/* 文献列表 */}
+                    <div className="px-4 pb-4">
+                      <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文献</p>
+                      {isLoadingCloud ? (
+                        <div className="flex items-center justify-center py-6">
+                          <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                        </div>
+                      ) : papers.length === 0 ? (
+                        <p className="px-3 py-4 text-xs text-slate-400 text-center">暂无文献，上传一篇开始吧</p>
+                      ) : (
+                        papers.map((paper) => {
+                          const isSelected = currentPaper?.id === paper.id;
+                          return (
+                            <div
+                              key={paper.id}
+                              onClick={() => setCurrentPaper(paper)}
+                              className={`px-3 py-3 rounded-lg text-xs cursor-pointer transition-all duration-150 ${
+                                isSelected
+                                  ? "bg-indigo-50 text-indigo-700 shadow-sm"
+                                  : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                              }`}
+                            >
+                              <div className="flex items-start gap-2.5">
+                                <FileText className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
+                                <div className="flex-1 min-w-0">
+                                  <p className="truncate font-medium leading-snug">{paper.file_name}</p>
+                                  <p className={`text-[10px] mt-0.5 ${isSelected ? "text-indigo-400" : "text-slate-400"}`}>
+                                    {paper.is_pinned ? "📌 " : ""}{new Date(paper.created_at).toLocaleDateString()}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </Panel>
@@ -616,6 +673,11 @@ function HomeContent() {
       )}
 
       <SettingsModal />
+      <FolderCreateModal
+        isOpen={isNewFolderModalOpen}
+        onCancel={() => setIsNewFolderModalOpen(false)}
+        onConfirm={handleConfirmNewFolder}
+      />
     </div>
   );
 }
