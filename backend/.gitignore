@@ -1,0 +1,20 @@
+# 绝对机密
+.env
+.env.*
+*.pem
+
+# Python 缓存和编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境 (Virtual Environments)
+venv/
+.venv/
+env/
+.env_venv/
+
+# IDE 和系统文件
+.vscode/
+.idea/
+.DS_Store

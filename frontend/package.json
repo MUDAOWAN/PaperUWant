@@ -12,6 +12,7 @@
     "@ai-sdk/openai": "^3.0.41",
     "@ai-sdk/react": "^3.0.118",
     "@floating-ui/react": "^0.27.19",
+    "@supabase/supabase-js": "^2.100.0",
     "@tailwindcss/oxide": "^4.2.1",
     "@tiptap/extension-placeholder": "^3.20.4",
     "@tiptap/pm": "^3.20.4",
@@ -22,13 +23,16 @@
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-hot-toast": "^2.6.0",
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.4.1",
     "react-resizable-panels": "^4.7.3",
     "rehype-katex": "^7.0.1",
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
-    "remark-math": "^6.0.0"
+    "remark-math": "^6.0.0",
+    "sonner": "^2.0.7",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

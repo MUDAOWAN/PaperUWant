@@ -27,23 +27,13 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
   useEffect(() => {
     const updateWidth = () => {
       if (containerRef.current) {
-        setPdfWidth(containerRef.current.clientWidth - 64); // 减去 padding
+        setPdfWidth(containerRef.current.clientWidth - 64);
       }
     };
     updateWidth();
     window.addEventListener("resize", updateWidth);
     return () => window.removeEventListener("resize", updateWidth);
   }, []);
-
-  if (!url) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-[#F9FAFB]">
-        <FileText className="h-16 w-16 mb-4 opacity-30" />
-        <p className="text-sm font-medium text-slate-500">No PDF file loaded</p>
-        <p className="text-xs text-slate-400 mt-1">Add a PDF file to public folder to view it here</p>
-      </div>
-    );
-  }
 
   const handleMouseUp = useCallback(() => {
     const selectionObj = window.getSelection();
@@ -74,8 +64,8 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     };
   }, [handleMouseUp]);
 
-  function onDocumentLoadSuccess({ numPages }: { numPages: number }) {
-    setNumPages(numPages);
+  function onDocumentLoadSuccess({ numPages: np }: { numPages: number }) {
+    setNumPages(np);
     setLoading(false);
     setError(null);
   }
@@ -101,6 +91,17 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     setSelection(null);
     window.getSelection()?.removeAllRanges();
   };
+
+  // ── 空状态 UI（所有 Hooks 调用之后）────────────────────────
+  if (!url) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-[#F9FAFB]">
+        <FileText className="h-16 w-16 mb-4 opacity-30" />
+        <p className="text-sm font-medium text-slate-500">No PDF file loaded</p>
+        <p className="text-xs text-slate-400 mt-1">Add a PDF file to public folder to view it here</p>
+      </div>
+    );
+  }
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto bg-[#525659] flex flex-col items-center relative min-w-0">

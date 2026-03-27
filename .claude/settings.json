@@ -35,7 +35,16 @@
       "Bash(curl -s -X POST https://api.minimax.chat/v1/text/chatcompletion_v2 -H \"Authorization: Bearer sk-cp-HUjxcIi-5qZ7L54zPHlG2LQ008F_PN11_JDIgjki1SOraYp-S0dx1qW9CRpeOs_sWbGAhg4Kft2yeg-bj9-XlouXTq4Y9AQlhTgfzsa6jiedyhhqNnpoVh4\" -H \"Content-Type: application/json\" -d '{\"\"model\"\":\"\"abab6.5s-chat\"\",\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"Hello\"\"}]}')",
       "Bash(curl -s -X POST http://localhost:3000/api/chat -H \"Content-Type: application/json\" -d '{\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"Hello\"\"}]}')",
       "Bash(curl -s -X POST http://localhost:3000/api/chat -H \"Content-Type: application/json\" -d '{\"\"messages\"\":[{\"\"role\"\":\"\"user\"\",\"\"content\"\":\"\"Hi\"\"}]}')",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(node -e \"const { useChat } = require\\(''''@ai-sdk/react''''\\); console.log\\(useChat.toString\\(\\).slice\\(0, 500\\)\\)\")",
+      "Bash(node -e \"const { streamText } = require\\(''ai''\\); const r = streamText\\({ model: {}, messages: [] }\\); console.log\\(Object.getOwnPropertyNames\\(Object.getPrototypeOf\\(r\\)\\).filter\\(k => k.startsWith\\(''to''\\)\\)\\)\")",
+      "Bash(node -e \"console.log\\(require\\(''./node_modules/ai/package.json''\\).version\\)\")",
+      "Bash(node -e \"const { streamText } = require\\(''''ai''''\\); const r = streamText\\({ model: { provider: ''''test'''', modelId: ''''test'''', settings: {}, sendMultipleHandle: async \\(\\) => {} }, messages: [] }\\); console.log\\(''''methods:'''', Object.getOwnPropertyNames\\(r\\).filter\\(k => k.startsWith\\(''''to''''\\)\\)\\)\")",
+      "Bash(node -e \"const ai = require\\(''ai''\\); console.log\\(''Direct exports with toData:'', Object.keys\\(ai\\).filter\\(k => k.includes\\(''DataStream''\\) || k.includes\\(''data''\\)\\)\\)\")",
+      "Bash(npm view:*)",
+      "Bash(node -e \"const v=require\\(''''fs''''\\).readFileSync\\(''''/dev/stdin'''',''''utf8''''\\); const arr=JSON.parse\\(v\\); const v6=arr.filter\\(x=>x.startsWith\\(''''6''''\\)\\); console.log\\(''''Latest v6:'''', v6[v6.length-1]\\)\")",
+      "Bash(node -e \"const { convertToModelMessages } = require\\(''ai''\\); const r = convertToModelMessages\\([{role:''user'', parts:[{type:''text'', text:''hi''}]}]\\); console.log\\(''isPromise:'', r instanceof Promise\\); if\\(r instanceof Promise\\) r.then\\(x => console.log\\(''resolved:'', Array.isArray\\(x\\)\\)\\).catch\\(e => console.log\\(''reject:'', e.message\\)\\)\")",
+      "Bash(node -e \"const { createOpenAI } = require\\(''@ai-sdk/openai''\\); const c = createOpenAI\\({ baseURL: ''https://test.com'', apiKey: ''test'', compatibility: ''compatible'' }\\); console.log\\(''runtime ok''\\)\")"
     ]
   }
 }

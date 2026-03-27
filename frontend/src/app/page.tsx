@@ -98,27 +98,20 @@ function HomeContent() {
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
-  const [input, setInput] = useState("");
   const [showApiKeyToast, setShowApiKeyToast] = useState(false);
+  const [input, setInput] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const notesEditorRef = useRef<SmartNotesEditorHandle>(null);
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
-  const { apiKey, baseUrl, model, systemPrompt, openSettings } = useSettings();
+  const { apiKey, baseUrl, modelName, systemPrompt, openSettings } = useSettings();
 
   // @ts-ignore - AI SDK v6 API mismatch
   const { messages, sendMessage, status, stop } = useChat({
     // @ts-ignore - AI SDK v6 API mismatch
     api: "/api/chat",
-    // @ts-ignore - AI SDK v6 API mismatch
-    body: {
-      apiKey,
-      baseUrl,
-      model,
-      systemPrompt,
-    },
   });
-  const isLoading = status === 'streaming';
+  const isLoading = status === 'submitted' || status === 'streaming';
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -158,7 +151,7 @@ function HomeContent() {
       return;
     }
     if (input.trim()) {
-      sendMessage({ text: input });
+      sendMessage({ text: input }, { body: { apiKey, baseUrl, modelName, systemPrompt } });
       setInput("");
     }
   };
@@ -169,9 +162,10 @@ function HomeContent() {
       rightPanelRef.current.expand();
       setIsRightCollapsed(false);
     }
-    sendMessage({
-      text: `请解释以下内容：\n\n${text}`,
-    });
+    sendMessage(
+      { text: `请解释以下内容：\n\n${text}` },
+      { body: { apiKey, baseUrl, modelName, systemPrompt } }
+    );
   };
 
   const handleAddToNotes = (text: string) => {
@@ -429,10 +423,9 @@ function HomeContent() {
                   )}
                   {messages.map((msg: any) => {
                     const textContent = typeof msg.content === 'string' ? msg.content : (msg.parts?.find((p: any) => p.type === 'text') as any)?.text || '';
-                    // 任务1：跳过无内容的空 assistant 消息（幽灵气泡）
-                    if (msg.role === "assistant" && !textContent.trim()) {
-                      return null;
-                    }
+                    // 过滤 <think> 推理标签（流式传输中断时也可能缺少闭合标签）
+                    const displayContent = textContent.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "");
+                    const isEmptyAssistant = msg.role === "assistant" && !displayContent.trim();
                     return (
                       <div key={msg.id} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"} items-start gap-3`}>
                         {msg.role === "assistant" && (
@@ -440,7 +433,11 @@ function HomeContent() {
                             <Sparkles className="h-4 w-4 text-white" />
                           </div>
                         )}
-                        <div className={`${msg.role === "assistant" ? "w-fit max-w-[85%] self-start bg-slate-50 border border-slate-100 rounded-2xl rounded-tl-sm" : "w-fit max-w-[80%] ml-auto bg-sky-50 border border-sky-100 rounded-2xl rounded-tr-sm text-sky-900 group relative"} rounded-2xl px-5 py-2 text-[13px] leading-[1.7] shadow-sm`}>
+                        <div className={`
+                          ${msg.role === "assistant"
+                            ? "w-fit max-w-[85%] self-start bg-slate-50 border border-slate-100 rounded-2xl rounded-tl-sm animate-in fade-in zoom-in-95 slide-in-from-bottom-2 duration-300 ease-out"
+                            : "w-fit max-w-[80%] ml-auto bg-sky-50 border border-sky-100 rounded-2xl rounded-tr-sm text-sky-900 group relative"
+                          } rounded-2xl px-5 py-2 text-[13px] leading-[1.7] shadow-sm min-h-[40px] transition-all duration-200`}>
                           {msg.role === "user" && (
                             <button
                               onClick={() => handleEditMessage(textContent)}
@@ -450,7 +447,14 @@ function HomeContent() {
                               <Pencil className="h-3 w-3 text-slate-500" />
                             </button>
                           )}
-                          <ReactMarkdown
+                          {isEmptyAssistant ? (
+                            <span className="flex items-center gap-1 py-0.5">
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse" />
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse [animation-delay:150ms]" />
+                              <span className="h-1.5 w-1.5 rounded-full bg-slate-400 animate-pulse [animation-delay:300ms]" />
+                            </span>
+                          ) : (
+                            <ReactMarkdown
                               remarkPlugins={[remarkGfm, remarkMath]}
                               rehypePlugins={[rehypeRaw, rehypeKatex]}
                               components={{
@@ -520,7 +524,10 @@ function HomeContent() {
                                   <a href={href} className="text-blue-600 underline hover:text-blue-700" target="_blank" rel="noopener noreferrer">{children}</a>
                                 ),
                               }}
-                            >{preprocessMarkdownContent(textContent)}</ReactMarkdown>
+                            >
+                              {preprocessMarkdownContent(displayContent)}
+                            </ReactMarkdown>
+                          )}
                         </div>
                       </div>
                     );

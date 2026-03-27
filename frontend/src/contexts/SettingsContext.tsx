@@ -5,26 +5,26 @@ import { createContext, useContext, useState, useEffect, ReactNode } from "react
 interface Settings {
   apiKey: string;
   baseUrl: string;
-  model: string;
+  modelName: string;
   systemPrompt: string;
 }
 
 interface SettingsContextValue extends Settings {
   setApiKey: (v: string) => void;
   setBaseUrl: (v: string) => void;
-  setModel: (v: string) => void;
+  setModelName: (v: string) => void;
   setSystemPrompt: (v: string) => void;
   isSettingsOpen: boolean;
   openSettings: () => void;
   closeSettings: () => void;
 }
 
-const DEFAULT_SYSTEM_PROMPT = "你是一位专业的AI学术助手，专注于帮助用户阅读和理解学术论文。请用清晰、专业的语言回答问题。";
+const DEFAULT_SYSTEM_PROMPT = "";
 
 const DEFAULT_SETTINGS: Settings = {
   apiKey: "",
-  baseUrl: "https://api.minimax.chat/v1",
-  model: "MiniMax-M2.7",
+  baseUrl: "",
+  modelName: "gpt-3.5-turbo",
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
 };
 
@@ -46,7 +46,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setSettings({
           apiKey: parsed.apiKey ?? DEFAULT_SETTINGS.apiKey,
           baseUrl: parsed.baseUrl ?? DEFAULT_SETTINGS.baseUrl,
-          model: parsed.model ?? DEFAULT_SETTINGS.model,
+          modelName: parsed.modelName ?? DEFAULT_SETTINGS.modelName,
           systemPrompt: parsed.systemPrompt ?? DEFAULT_SETTINGS.systemPrompt,
         });
       }
@@ -71,7 +71,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     ...settings,
     setApiKey: (v) => setSettings((s) => ({ ...s, apiKey: v })),
     setBaseUrl: (v) => setSettings((s) => ({ ...s, baseUrl: v })),
-    setModel: (v) => setSettings((s) => ({ ...s, model: v })),
+    setModelName: (v) => setSettings((s) => ({ ...s, modelName: v })),
     setSystemPrompt: (v) => setSettings((s) => ({ ...s, systemPrompt: v })),
     isSettingsOpen,
     openSettings: () => setIsSettingsOpen(true),
