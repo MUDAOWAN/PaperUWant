@@ -8,6 +8,7 @@ interface DeleteConfirmModalProps {
   paperName: string;
   onCancel: () => void;
   onConfirm: () => void;
+  title?: string;
 }
 
 export default function DeleteConfirmModal({
@@ -15,6 +16,7 @@ export default function DeleteConfirmModal({
   paperName,
   onCancel,
   onConfirm,
+  title,
 }: DeleteConfirmModalProps) {
   // Close on Escape
   useEffect(() => {
@@ -52,7 +54,7 @@ export default function DeleteConfirmModal({
           {/* Content */}
           <div className="px-6 pb-2 text-center">
             <h2 className="text-sm font-semibold text-slate-900 mb-2">
-              确定要删除这篇文献吗？
+              {title ?? "确定要删除这篇文献吗？"}
             </h2>
             <p className="text-xs text-slate-500 leading-relaxed">
               删除后将从云端彻底移除，且不可恢复。

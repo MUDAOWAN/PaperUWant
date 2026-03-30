@@ -36,6 +36,8 @@ import {
   Edit2,
   Trash2,
   FilePlus,
+  FolderInput,
+  Clock,
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -45,6 +47,7 @@ import FolderCreateModal from "../components/FolderCreateModal";
 import FolderRenameModal from "../components/FolderRenameModal";
 import DeleteConfirmModal from "../components/DeleteConfirmModal";
 import FolderAddPapersModal from "../components/FolderAddPapersModal";
+import MovePaperModal from "../components/MovePaperModal";
 import { SettingsProvider, useSettings } from "../contexts/SettingsContext";
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
@@ -75,7 +78,7 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, createFolder, clearPapers, fetchUsedStorage } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, clearPapers, fetchUsedStorage, updatePaperFolder, batchUpdatePaperFolder, deletePaper } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -86,6 +89,10 @@ function HomeContent() {
   const [renameModal, setRenameModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
   const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
   const [addPapersModal, setAddPapersModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
+  const [movePaperModal, setMovePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
+  const [deletePaperModal, setDeletePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
+  const [contextMenu, setContextMenu] = useState<{ paperId: string; x: number; y: number } | null>(null);
+  const uncategorizedPapers = papers.filter((p) => !p.folder_id);
   const inputRef = useRef<HTMLInputElement>(null);
   const notesEditorRef = useRef<SmartNotesEditorHandle>(null);
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
@@ -101,16 +108,22 @@ function HomeContent() {
     clearPapers();
   };
 
-  // Create folder handler
-  const handleConfirmNewFolder = async (name: string) => {
-    if (user) {
-      await createFolder(name, user.id);
-      toast(
-        <div className="flex items-center gap-2 text-green-600 font-medium">
-          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-          新建文件夹成功
-        </div>
-      );
+  // Create folder handler — composite: create folder then move selected papers
+  const handleConfirmNewFolder = async (name: string, selectedPaperIds: string[]) => {
+    if (!user) return;
+    await usePaperStore.getState().createFolder(name, user.id);
+    // Find the newly created folder (most recent with this name)
+    const { data: folderRows } = await (await import("../lib/supabase"))
+      .supabase.from("folders").select("id").eq("user_id", user.id).eq("name", name).order("created_at", { ascending: false }).limit(1);
+    const newFolderId = folderRows?.[0]?.id;
+    toast(
+      <div className="flex items-center gap-2 text-green-600 font-medium">
+        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+        新建文件夹成功{selectedPaperIds.length > 0 ? `，已移入 ${selectedPaperIds.length} 篇文献` : ""}
+      </div>
+    );
+    if (selectedPaperIds.length > 0 && newFolderId) {
+      await usePaperStore.getState().batchUpdatePaperFolder(selectedPaperIds, newFolderId);
     }
     setIsNewFolderModalOpen(false);
   };
@@ -118,8 +131,7 @@ function HomeContent() {
   // Rename folder handler
   const handleConfirmRename = async (name: string) => {
     if (renameModal.folder) {
-      const { renameFolder } = usePaperStore.getState();
-      await renameFolder(renameModal.folder.id, name);
+      await usePaperStore.getState().renameFolder(renameModal.folder.id, name);
       toast(
         <div className="flex items-center gap-2 text-green-600 font-medium">
           <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
@@ -148,8 +160,7 @@ function HomeContent() {
   // Add papers to folder handler
   const handleConfirmAddPapers = async (selectedIds: string[]) => {
     if (addPapersModal.folder) {
-      const { batchUpdatePaperFolder } = usePaperStore.getState();
-      await batchUpdatePaperFolder(selectedIds, addPapersModal.folder.id);
+      await usePaperStore.getState().batchUpdatePaperFolder(selectedIds, addPapersModal.folder.id);
       toast(
         <div className="flex items-center gap-2 text-green-600 font-medium">
           <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
@@ -159,6 +170,42 @@ function HomeContent() {
     }
     setAddPapersModal({ isOpen: false, folder: null });
   };
+
+  // Move paper handler
+  const handleConfirmMovePaper = async (folderId: string) => {
+    if (movePaperModal.paper) {
+      await usePaperStore.getState().updatePaperFolder(movePaperModal.paper.id, folderId);
+      toast(
+        <div className="flex items-center gap-2 text-green-600 font-medium">
+          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+          已移入文件夹
+        </div>
+      );
+    }
+    setMovePaperModal({ isOpen: false, paper: null });
+  };
+
+  // Delete paper from confirmation modal
+  const handleConfirmDeletePaper = async () => {
+    if (!deletePaperModal.paper) return;
+    await deletePaper(deletePaperModal.paper.id);
+    await fetchCloudPapers(user!.id);
+    await fetchUsedStorage(user!.id);
+    toast(
+      <div className="flex items-center gap-2 text-green-600 font-medium">
+        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+        文献已彻底删除
+      </div>
+    );
+    setDeletePaperModal({ isOpen: false, paper: null });
+  };
+
+  // Global click to close context menu
+  useEffect(() => {
+    const handler = () => setContextMenu(null);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, []);
 
   // Folder accordion toggle
   const toggleFolder = (folderId: string) => {
@@ -501,9 +548,9 @@ function HomeContent() {
                             const isExpanded = expandedFolders.has(folder.id);
                             const folderPapers = papers.filter((p) => p.folder_id === folder.id);
                             return (
-                              <div key={folder.id} className="group">
+                              <div key={folder.id} className="group mb-2 p-2 bg-gray-50 rounded-lg border border-gray-100/80">
                                 {/* Folder row */}
-                                <div className="flex items-center gap-1 px-2 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
+                                <div className="flex items-center gap-1 px-2 py-2 text-sm text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors">
                                   <button
                                     onClick={() => toggleFolder(folder.id)}
                                     className="p-0.5 hover:bg-slate-100 rounded transition-colors shrink-0"
@@ -550,7 +597,8 @@ function HomeContent() {
                                         <div
                                           key={paper.id}
                                           onClick={() => setCurrentPaper(paper)}
-                                          className={`px-3 py-2.5 rounded-lg text-xs cursor-pointer transition-all duration-150 ${
+                                          onContextMenu={(e) => { e.preventDefault(); setContextMenu({ paperId: paper.id, x: e.clientX, y: e.clientY }); }}
+                                          className={`px-3 py-[15px] rounded-lg text-sm cursor-pointer transition-all duration-150 ${
                                             isSelected
                                               ? "bg-indigo-50 text-indigo-700 shadow-sm"
                                               : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -573,21 +621,22 @@ function HomeContent() {
                         </div>
                       )}
 
-                      <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文献</p>
+                      <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">未分类文献</p>
                       {isLoadingCloud ? (
                         <div className="flex items-center justify-center py-6">
                           <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
                         </div>
-                      ) : papers.length === 0 ? (
-                        <p className="px-3 py-4 text-xs text-slate-400 text-center">暂无文献，上传一篇开始吧</p>
+                      ) : uncategorizedPapers.length === 0 ? (
+                        <p className="px-3 py-4 text-xs text-slate-400 text-center">暂无未分类文献</p>
                       ) : (
-                        papers.map((paper) => {
+                        uncategorizedPapers.map((paper) => {
                           const isSelected = currentPaper?.id === paper.id;
                           return (
                             <div
                               key={paper.id}
                               onClick={() => setCurrentPaper(paper)}
-                              className={`px-3 py-3 rounded-lg text-xs cursor-pointer transition-all duration-150 ${
+                              onContextMenu={(e) => { e.preventDefault(); setContextMenu({ paperId: paper.id, x: e.clientX, y: e.clientY }); }}
+                              className={`px-3 py-[17px] rounded-lg text-sm cursor-pointer transition-all duration-150 ${
                                 isSelected
                                   ? "bg-indigo-50 text-indigo-700 shadow-sm"
                                   : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
@@ -597,9 +646,6 @@ function HomeContent() {
                                 <FileText className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
                                 <div className="flex-1 min-w-0">
                                   <p className="truncate font-medium leading-snug">{paper.file_name}</p>
-                                  <p className={`text-[10px] mt-0.5 ${isSelected ? "text-indigo-400" : "text-slate-400"}`}>
-                                    {paper.is_pinned ? "📌 " : ""}{new Date(paper.created_at).toLocaleDateString()}
-                                  </p>
                                 </div>
                               </div>
                             </div>
@@ -951,6 +997,7 @@ function HomeContent() {
       <SettingsModal />
       <FolderCreateModal
         isOpen={isNewFolderModalOpen}
+        papers={papers}
         onCancel={() => setIsNewFolderModalOpen(false)}
         onConfirm={handleConfirmNewFolder}
       />
@@ -966,6 +1013,13 @@ function HomeContent() {
         onCancel={() => setDeleteModal({ isOpen: false, folder: null })}
         onConfirm={handleConfirmDelete}
       />
+      <DeleteConfirmModal
+        isOpen={deletePaperModal.isOpen}
+        paperName={deletePaperModal.paper?.file_name ?? ""}
+        title="确认删除"
+        onCancel={() => setDeletePaperModal({ isOpen: false, paper: null })}
+        onConfirm={handleConfirmDeletePaper}
+      />
       <FolderAddPapersModal
         isOpen={addPapersModal.isOpen}
         folder={addPapersModal.folder}
@@ -973,6 +1027,52 @@ function HomeContent() {
         onCancel={() => setAddPapersModal({ isOpen: false, folder: null })}
         onConfirm={handleConfirmAddPapers}
       />
+      <MovePaperModal
+        isOpen={movePaperModal.isOpen}
+        paperName={movePaperModal.paper?.file_name ?? ""}
+        folders={folders}
+        onCancel={() => setMovePaperModal({ isOpen: false, paper: null })}
+        onConfirm={handleConfirmMovePaper}
+      />
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-[500] bg-white/95 backdrop-blur-md shadow-lg border border-black/5 rounded-xl py-1 w-44 animate-in fade-in zoom-in-95 duration-150"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => { setCurrentPaper(papers.find((p) => p.id === contextMenu.paperId)!); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <FileText className="h-4 w-4 text-slate-400 shrink-0" />
+            打开文献
+          </button>
+          <button
+            onClick={() => { setMovePaperModal({ isOpen: true, paper: papers.find((p) => p.id === contextMenu.paperId) ?? null }); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <FolderInput className="h-4 w-4 text-slate-400 shrink-0" />
+            移入文件夹
+          </button>
+          <button
+            onClick={() => { const paper = papers.find((p) => p.id === contextMenu.paperId); if (paper?.created_at) toast(`添加时间：${new Date(paper.created_at).toLocaleString("zh-CN")}`); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            <Clock className="h-4 w-4 text-slate-400 shrink-0" />
+            查看添加时间
+          </button>
+          <div className="h-px bg-slate-100 my-1" />
+          <button
+            onClick={() => { const paper = papers.find((p) => p.id === contextMenu.paperId); if (paper) setDeletePaperModal({ isOpen: true, paper }); setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-red-500 hover:bg-red-50 transition-colors"
+          >
+            <Trash2 className="h-4 w-4 text-red-400 shrink-0" />
+            删除文献
+          </button>
+        </div>
+      )}
     </div>
   );
 }

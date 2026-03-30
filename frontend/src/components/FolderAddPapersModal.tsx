@@ -85,7 +85,7 @@ export default function FolderAddPapersModal({
         <div
           className="bg-white rounded-2xl shadow-2xl shadow-black/20 border border-black/5 w-full max-w-md mx-4 flex flex-col animate-in zoom-in-95 fade-in duration-200"
           onClick={(e) => e.stopPropagation()}
-          style={{ maxHeight: "85vh" }}
+          style={{ height: "520px" }}
         >
           {/* Header */}
           <div className="flex items-center gap-3 px-6 pt-6 pb-4 shrink-0">
@@ -114,7 +114,7 @@ export default function FolderAddPapersModal({
           </div>
 
           {/* Paper List */}
-          <div className="flex-1 overflow-y-auto px-6 min-h-0" style={{ maxHeight: "55vh" }}>
+          <div className="flex-1 overflow-y-auto min-h-0 px-6">
             {filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-slate-400">
                 <FileText className="h-8 w-8 mb-2 opacity-30" />
