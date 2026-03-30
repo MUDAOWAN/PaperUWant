@@ -28,6 +28,7 @@ interface PaperState {
   currentPaper: Paper | null;
   currentPdfUrl: string | null;
   isLoadingCloud: boolean;
+  usedStorageBytes: number;
   // Folder actions
   fetchFolders: (userId: string) => Promise<void>;
   createFolder: (name: string, userId: string) => Promise<void>;
@@ -44,6 +45,8 @@ interface PaperState {
   batchUpdatePaperFolder: (paperIds: string[], folderId: string | null) => Promise<void>;
   togglePin: (paperId: string) => Promise<void>;
   deletePaper: (paperId: string) => Promise<void>;
+  setUsedStorageBytes: (bytes: number) => void;
+  fetchUsedStorage: (userId: string) => Promise<void>;
 }
 
 export const usePaperStore = create<PaperState>()(
@@ -54,6 +57,7 @@ export const usePaperStore = create<PaperState>()(
       currentPaper: null,
       currentPdfUrl: null,
       isLoadingCloud: false,
+      usedStorageBytes: 0,
 
       setCurrentPaper: (paper) =>
         set({ currentPaper: paper, currentPdfUrl: paper?.pdf_url ?? null }),
@@ -68,7 +72,7 @@ export const usePaperStore = create<PaperState>()(
         })),
 
       clearPapers: () =>
-        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null }),
+        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0 }),
 
       // ================= Folders =================
       fetchFolders: async (userId: string) => {
@@ -322,10 +326,28 @@ export const usePaperStore = create<PaperState>()(
           console.error("[paperStore] deletePaper exception:", err);
         }
       },
+
+      setUsedStorageBytes: (bytes) => set({ usedStorageBytes: bytes }),
+
+      fetchUsedStorage: async (userId: string) => {
+        try {
+          const { data, error } = await supabase.storage
+            .from("PaperUWant_PDFS")
+            .list(userId, { limit: 1000 });
+          if (error) return;
+          const totalBytes = (data ?? []).reduce(
+            (sum: number, f: any) => sum + (f.metadata?.size ?? 0),
+            0
+          );
+          set({ usedStorageBytes: totalBytes });
+        } catch (err) {
+          console.error("[paperStore] fetchUsedStorage exception:", err);
+        }
+      },
     }),
     {
       name: "paper-u-want-storage",
-      partialize: (state) => ({ currentPaper: state.currentPaper }),
+      partialize: (state) => ({ currentPaper: state.currentPaper, usedStorageBytes: state.usedStorageBytes }),
     }
   )
 );

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
 import { usePaperStore } from "../store/paperStore";
+import { toast } from "sonner";
 import {
   FileText,
   Search,
@@ -28,12 +29,22 @@ import {
   LogOut,
   FolderPlus,
   Folder,
+  CheckCircle,
+  XCircle,
+  ChevronRight,
+  ChevronDown,
+  Edit2,
+  Trash2,
+  FilePlus,
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
 import SmartNotesEditor, { SmartNotesEditorHandle } from "../components/SmartNotesEditor";
 import SettingsModal from "../components/SettingsModal";
 import FolderCreateModal from "../components/FolderCreateModal";
+import FolderRenameModal from "../components/FolderRenameModal";
+import DeleteConfirmModal from "../components/DeleteConfirmModal";
+import FolderAddPapersModal from "../components/FolderAddPapersModal";
 import { SettingsProvider, useSettings } from "../contexts/SettingsContext";
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
@@ -64,13 +75,17 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, createFolder, clearPapers } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, createFolder, clearPapers, fetchUsedStorage } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
   const [showApiKeyToast, setShowApiKeyToast] = useState(false);
   const [input, setInput] = useState("");
   const [isNewFolderModalOpen, setIsNewFolderModalOpen] = useState(false);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [renameModal, setRenameModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
+  const [deleteModal, setDeleteModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
+  const [addPapersModal, setAddPapersModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
   const inputRef = useRef<HTMLInputElement>(null);
   const notesEditorRef = useRef<SmartNotesEditorHandle>(null);
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
@@ -90,8 +105,153 @@ function HomeContent() {
   const handleConfirmNewFolder = async (name: string) => {
     if (user) {
       await createFolder(name, user.id);
+      toast(
+        <div className="flex items-center gap-2 text-green-600 font-medium">
+          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+          新建文件夹成功
+        </div>
+      );
     }
     setIsNewFolderModalOpen(false);
+  };
+
+  // Rename folder handler
+  const handleConfirmRename = async (name: string) => {
+    if (renameModal.folder) {
+      const { renameFolder } = usePaperStore.getState();
+      await renameFolder(renameModal.folder.id, name);
+      toast(
+        <div className="flex items-center gap-2 text-green-600 font-medium">
+          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+          修改成功
+        </div>
+      );
+    }
+    setRenameModal({ isOpen: false, folder: null });
+  };
+
+  // Delete folder handler
+  const handleConfirmDelete = async () => {
+    if (deleteModal.folder) {
+      const { deleteFolder } = usePaperStore.getState();
+      await deleteFolder(deleteModal.folder.id);
+      toast(
+        <div className="flex items-center gap-2 text-green-600 font-medium">
+          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+          删除成功
+        </div>
+      );
+    }
+    setDeleteModal({ isOpen: false, folder: null });
+  };
+
+  // Add papers to folder handler
+  const handleConfirmAddPapers = async (selectedIds: string[]) => {
+    if (addPapersModal.folder) {
+      const { batchUpdatePaperFolder } = usePaperStore.getState();
+      await batchUpdatePaperFolder(selectedIds, addPapersModal.folder.id);
+      toast(
+        <div className="flex items-center gap-2 text-green-600 font-medium">
+          <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+          已移入文件夹
+        </div>
+      );
+    }
+    setAddPapersModal({ isOpen: false, folder: null });
+  };
+
+  // Folder accordion toggle
+  const toggleFolder = (folderId: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  };
+
+  // Upload Toast fix: replace toast.error() with plain toast(JSX) to avoid double icon
+  const toastError = (msg: string) => {
+    toast(
+      <div className="flex items-center gap-2 text-red-500 font-medium">
+        <XCircle className="w-4 h-4 shrink-0" />
+        {msg}
+      </div>
+    );
+  };
+
+  // Upload ref & handler
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const isUploadingRef = useRef(false);
+  const QUOTA_BYTES = 100 * 1024 * 1024; // 100 MB
+
+  const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length || !user || isUploadingRef.current) return;
+    isUploadingRef.current = true;
+    e.target.value = "";
+
+    const totalSelectedBytes = files.reduce((sum, f) => sum + f.size, 0);
+
+    // Pre-upload quota check
+    if (usedStorageBytes + totalSelectedBytes > QUOTA_BYTES) {
+      toastError("您的云盘空间不足，请删除部分旧文献或绑定个人云盘");
+      isUploadingRef.current = false;
+      return;
+    }
+
+    const loadingToastId = crypto.randomUUID();
+    toast(
+      <div className="flex items-center text-blue-600 font-medium">
+        <Loader2 className="animate-spin mr-2 w-4 h-4 text-blue-500" />
+        正在将文件上传至云端，请稍等
+      </div>,
+      { id: loadingToastId }
+    );
+
+    let successCount = 0;
+    const { supabase } = await import("../lib/supabase");
+
+    for (const file of files) {
+      const storagePath = `${user.id}/${Date.now()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage
+        .from("PaperUWant_PDFS")
+        .upload(storagePath, file);
+
+      if (uploadError) {
+        toast(
+          <div className="flex items-center gap-2">
+            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
+            <span>"{file.name}" 上传失败</span>
+          </div>,
+          { id: loadingToastId }
+        );
+        isUploadingRef.current = false;
+        return;
+      }
+
+      const { data: insertData, error: insertError } = await supabase
+        .from("papers")
+        .insert({ file_name: file.name, storage_path: storagePath, user_id: user.id })
+        .select()
+        .single();
+
+      if (!insertError && insertData) {
+        successCount++;
+      }
+    }
+
+    toast(
+      <div className="flex items-center gap-2 text-green-600 font-medium">
+        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+        上传成功 ({successCount}/{files.length})
+      </div>,
+      { id: loadingToastId }
+    );
+
+    await fetchCloudPapers(user.id);
+    await fetchUsedStorage(user.id);
+    isUploadingRef.current = false;
   };
 
   // Rehydrate ref to prevent concurrent calls
@@ -104,6 +264,7 @@ function HomeContent() {
       fetchFolders(user.id);
       fetchCloudPapers(user.id);
     }
+    fetchUsedStorage(user.id);
   }, [user, papers.length, isLoadingCloud]);
 
   // Rehydrate signed URL when currentPaper id changes (use stable id, not object ref)
@@ -304,10 +465,21 @@ function HomeContent() {
                       className="flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
                     />
                   </div>
-                  <button className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all shadow-sm">
+                  <button
+                    onClick={() => uploadInputRef.current?.click()}
+                    className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all shadow-sm"
+                  >
                     <UploadCloud className="h-3.5 w-3.5" />
-                    添加文献
+                    上传文献
                   </button>
+                  <input
+                    ref={uploadInputRef}
+                    type="file"
+                    multiple
+                    accept="application/pdf"
+                    className="hidden"
+                    onChange={handleUploadFiles}
+                  />
                   <button
                     onClick={() => setIsNewFolderModalOpen(true)}
                     className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-all"
@@ -320,24 +492,87 @@ function HomeContent() {
                 {/* 列表区 */}
                 {user && (
                   <>
-                    {/* 文件夹列表 */}
-                    {folders.length > 0 && (
-                      <div className="px-4 pb-2">
-                        <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文件夹</p>
-                        {folders.map((folder) => (
-                          <div
-                            key={folder.id}
-                            className="flex items-center gap-2 px-3 py-2.5 text-sm text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors"
-                          >
-                            <Folder className="h-4 w-4 text-amber-500 shrink-0" />
-                            <span className="truncate font-semibold">{folder.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    {/* 可滚动列表区 */}
+                    <div className="flex-1 overflow-y-auto px-4 pb-4 min-h-0">
+                      {folders.length > 0 && (
+                        <div className="pb-2">
+                          <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文件夹</p>
+                          {folders.map((folder) => {
+                            const isExpanded = expandedFolders.has(folder.id);
+                            const folderPapers = papers.filter((p) => p.folder_id === folder.id);
+                            return (
+                              <div key={folder.id} className="group">
+                                {/* Folder row */}
+                                <div className="flex items-center gap-1 px-2 py-2 text-sm text-slate-700 hover:bg-slate-50 rounded-lg cursor-pointer transition-colors">
+                                  <button
+                                    onClick={() => toggleFolder(folder.id)}
+                                    className="p-0.5 hover:bg-slate-100 rounded transition-colors shrink-0"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
+                                    ) : (
+                                      <ChevronRight className="h-3.5 w-3.5 text-slate-400" />
+                                    )}
+                                  </button>
+                                  <Folder className="h-4 w-4 text-amber-500 shrink-0" />
+                                  <span className="flex-1 truncate font-semibold">{folder.name}</span>
+                                  {/* Hover action buttons */}
+                                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
+                                    <button
+                                      onClick={() => setRenameModal({ isOpen: true, folder })}
+                                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                      title="重命名"
+                                    >
+                                      <Edit2 className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => setAddPapersModal({ isOpen: true, folder })}
+                                      className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors"
+                                      title="移入文献"
+                                    >
+                                      <FilePlus className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={() => setDeleteModal({ isOpen: true, folder })}
+                                      className="p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                                      title="删除"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                {/* Expanded paper list */}
+                                {isExpanded && folderPapers.length > 0 && (
+                                  <div className="ml-6 space-y-1 mt-1">
+                                    {folderPapers.map((paper) => {
+                                      const isSelected = currentPaper?.id === paper.id;
+                                      return (
+                                        <div
+                                          key={paper.id}
+                                          onClick={() => setCurrentPaper(paper)}
+                                          className={`px-3 py-2.5 rounded-lg text-xs cursor-pointer transition-all duration-150 ${
+                                            isSelected
+                                              ? "bg-indigo-50 text-indigo-700 shadow-sm"
+                                              : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                                          }`}
+                                        >
+                                          <div className="flex items-start gap-2">
+                                            <FileText className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
+                                            <div className="flex-1 min-w-0">
+                                              <p className="truncate font-medium leading-snug">{paper.file_name}</p>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
-                    {/* 文献列表 */}
-                    <div className="px-4 pb-4">
                       <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文献</p>
                       {isLoadingCloud ? (
                         <div className="flex items-center justify-center py-6">
@@ -372,6 +607,24 @@ function HomeContent() {
                         })
                       )}
                     </div>
+
+                    {/* 容量条 — 固定底部 */}
+                    {usedStorageBytes > 0 && (
+                      <div className="shrink-0 px-4 pt-4 pb-4 border-t border-gray-100 bg-white/90 backdrop-blur-sm">
+                        <p className="text-[11px] text-gray-400 mb-2">如需扩容请到设置绑定个人云盘</p>
+                        <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all duration-500 ${
+                              usedStorageBytes / QUOTA_BYTES > 0.9 ? "bg-red-400" : "bg-blue-500"
+                            }`}
+                            style={{ width: `${Math.min((usedStorageBytes / QUOTA_BYTES) * 100, 100)}%` }}
+                          />
+                        </div>
+                        <p className="text-xs text-gray-500 mt-1.5 text-right">
+                          已用 {Math.round(usedStorageBytes / 1024 / 1024)} MB / 100 MB
+                        </p>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -700,6 +953,25 @@ function HomeContent() {
         isOpen={isNewFolderModalOpen}
         onCancel={() => setIsNewFolderModalOpen(false)}
         onConfirm={handleConfirmNewFolder}
+      />
+      <FolderRenameModal
+        isOpen={renameModal.isOpen}
+        currentName={renameModal.folder?.name ?? ""}
+        onCancel={() => setRenameModal({ isOpen: false, folder: null })}
+        onConfirm={handleConfirmRename}
+      />
+      <DeleteConfirmModal
+        isOpen={deleteModal.isOpen}
+        paperName={deleteModal.folder?.name ?? ""}
+        onCancel={() => setDeleteModal({ isOpen: false, folder: null })}
+        onConfirm={handleConfirmDelete}
+      />
+      <FolderAddPapersModal
+        isOpen={addPapersModal.isOpen}
+        folder={addPapersModal.folder}
+        papers={papers}
+        onCancel={() => setAddPapersModal({ isOpen: false, folder: null })}
+        onConfirm={handleConfirmAddPapers}
       />
     </div>
   );
