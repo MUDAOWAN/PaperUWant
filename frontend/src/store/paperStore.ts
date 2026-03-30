@@ -39,6 +39,7 @@ interface PaperState {
   setCurrentPdfUrl: (url: string | null) => void;
   addPaper: (paper: Paper) => void;
   clearPapers: () => void;
+  reset: () => void;
   fetchCloudPapers: (userId: string) => Promise<void>;
   rehydrateUrls: () => Promise<void>;
   updatePaperFolder: (paperId: string, folderId: string | null) => Promise<void>;
@@ -74,6 +75,9 @@ export const usePaperStore = create<PaperState>()(
       clearPapers: () =>
         set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0 }),
 
+      reset: () =>
+        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, isLoadingCloud: false }),
+
       // ================= Folders =================
       fetchFolders: async (userId: string) => {
         try {
@@ -89,6 +93,8 @@ export const usePaperStore = create<PaperState>()(
           set({ folders: data ?? [] });
         } catch (err) {
           console.error("[paperStore] fetchFolders exception:", err);
+        } finally {
+          // no loading state for folders, kept for consistency
         }
       },
 
@@ -166,7 +172,6 @@ export const usePaperStore = create<PaperState>()(
 
           if (error) {
             console.error("[paperStore] fetchCloudPapers error:", error.message);
-            set({ isLoadingCloud: false });
             return;
           }
 
@@ -181,9 +186,10 @@ export const usePaperStore = create<PaperState>()(
             created_at: row.created_at,
           }));
 
-          set({ papers: cloudPapers, isLoadingCloud: false });
+          set({ papers: cloudPapers });
         } catch (err) {
           console.error("[paperStore] fetchCloudPapers exception:", err);
+        } finally {
           set({ isLoadingCloud: false });
         }
       },
@@ -334,7 +340,11 @@ export const usePaperStore = create<PaperState>()(
           const { data, error } = await supabase.storage
             .from("PaperUWant_PDFS")
             .list(userId, { limit: 1000 });
-          if (error) return;
+          if (error) {
+            console.error("[paperStore] fetchUsedStorage error:", error.message);
+            set({ usedStorageBytes: 0 });
+            return;
+          }
           const totalBytes = (data ?? []).reduce(
             (sum: number, f: any) => sum + (f.metadata?.size ?? 0),
             0
@@ -342,6 +352,7 @@ export const usePaperStore = create<PaperState>()(
           set({ usedStorageBytes: totalBytes });
         } catch (err) {
           console.error("[paperStore] fetchUsedStorage exception:", err);
+          set({ usedStorageBytes: 0 });
         }
       },
     }),

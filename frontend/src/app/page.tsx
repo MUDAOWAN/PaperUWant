@@ -78,7 +78,7 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, clearPapers, fetchUsedStorage, updatePaperFolder, batchUpdatePaperFolder, deletePaper } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -105,7 +105,7 @@ function HomeContent() {
     await supabase.auth.signOut();
     useAuthStore.getState().setUser(null);
     useAuthStore.getState().setSession(null);
-    clearPapers();
+    usePaperStore.getState().reset();
   };
 
   // Create folder handler — composite: create folder then move selected papers
@@ -306,13 +306,17 @@ function HomeContent() {
 
   // Fetch cloud papers & folders — runs on mount + whenever user changes
   useEffect(() => {
-    if (!user) return;
-    if (papers.length === 0 && !isLoadingCloud) {
-      fetchFolders(user.id);
-      fetchCloudPapers(user.id);
+    if (!user?.id) {
+      return;
     }
-    fetchUsedStorage(user.id);
-  }, [user, papers.length, isLoadingCloud]);
+    Promise.all([
+      fetchCloudPapers(user.id),
+      fetchFolders(user.id),
+      fetchUsedStorage(user.id),
+    ]).catch((err) => {
+      console.error("[page] 拉取用户数据失败:", err);
+    });
+  }, [user?.id]);
 
   // Rehydrate signed URL when currentPaper id changes (use stable id, not object ref)
   useEffect(() => {
