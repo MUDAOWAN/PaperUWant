@@ -64,7 +64,7 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, setCurrentPaper, fetchFolders, fetchCloudPapers, isLoadingCloud, createFolder, clearPapers } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, createFolder, clearPapers } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -94,13 +94,24 @@ function HomeContent() {
     setIsNewFolderModalOpen(false);
   };
 
-  // Fetch cloud papers & folders when user logs in
+  // Rehydrate ref to prevent concurrent calls
+  const isRehydratingRef = useRef(false);
+
+  // Fetch cloud papers & folders — runs on mount + whenever user changes
   useEffect(() => {
-    if (user) {
+    if (!user) return;
+    if (papers.length === 0 && !isLoadingCloud) {
       fetchFolders(user.id);
       fetchCloudPapers(user.id);
     }
-  }, [user]);
+  }, [user, papers.length, isLoadingCloud]);
+
+  // Rehydrate signed URL when currentPaper id changes (use stable id, not object ref)
+  useEffect(() => {
+    if (!currentPaper || isRehydratingRef.current) return;
+    isRehydratingRef.current = true;
+    rehydrateUrls().finally(() => { isRehydratingRef.current = false; });
+  }, [currentPaper?.id]);
 
   // @ts-ignore - AI SDK v6 API mismatch
   const { messages, sendMessage, status, stop } = useChat({
@@ -383,8 +394,12 @@ function HomeContent() {
               {/* 顶部工具栏 */}
               <header className="flex items-center justify-between px-6 h-14 border-b border-slate-100 shrink-0 bg-white">
                 <div className="flex items-center gap-3">
-                  <h1 className="font-bold text-sm text-slate-900 truncate max-w-md">Attention Is All You Need</h1>
-                  <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-md">Reading</span>
+                  <h1 className="font-bold text-sm text-slate-900 truncate max-w-md">
+                    {currentPaper ? currentPaper.file_name : "请在左边选择文献打开"}
+                  </h1>
+                  {currentPaper && (
+                    <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-semibold rounded-md">Reading</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
@@ -398,11 +413,19 @@ function HomeContent() {
 
               {/* PDF 内容区 */}
               <div className="flex-1 flex flex-col overflow-hidden">
-                <PdfViewer
-                  url="/SplaTAM_Splat, Track & Map 3D Gaussians for Dense RGB-D SLAM.pdf"
-                  onExplain={handleExplain}
-                  onAddToNotes={handleAddToNotes}
-                />
+                {currentPaper ? (
+                  <PdfViewer
+                    url={currentPdfUrl ?? ""}
+                    onExplain={handleExplain}
+                    onAddToNotes={handleAddToNotes}
+                  />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full m-4 bg-gray-50/50 border-2 border-dashed border-gray-200 rounded-2xl">
+                    <BookOpen className="w-16 h-16 text-gray-300 animate-pulse" />
+                    <p className="text-gray-500 font-medium mt-4">请在左侧选择文献</p>
+                    <p className="text-gray-400 text-sm mt-2">支持PDF文献的划词翻译与 AI 阅读</p>
+                  </div>
+                )}
               </div>
             </main>
           </Panel>
