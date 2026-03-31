@@ -6,7 +6,6 @@ import { usePaperStore } from "../store/paperStore";
 import { toast } from "sonner";
 import {
   FileText,
-  Search,
   User,
   BookOpen,
   Sparkles,
@@ -38,6 +37,8 @@ import {
   FilePlus,
   FolderInput,
   Clock,
+  Pin,
+  PinOff,
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -78,7 +79,7 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -92,7 +93,12 @@ function HomeContent() {
   const [movePaperModal, setMovePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
   const [deletePaperModal, setDeletePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
   const [contextMenu, setContextMenu] = useState<{ paperId: string; x: number; y: number } | null>(null);
-  const uncategorizedPapers = papers.filter((p) => !p.folder_id);
+  const uncategorizedPapers = papers
+    .filter((p) => !p.folder_id)
+    .sort((a, b) => {
+      if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+      return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+    });
   const inputRef = useRef<HTMLInputElement>(null);
   const notesEditorRef = useRef<SmartNotesEditorHandle>(null);
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
@@ -506,16 +512,8 @@ function HomeContent() {
                   </button>
                 </div>
 
-                {/* 搜索与操作区 */}
+                {/* 操作区 */}
                 <div className="p-4 shrink-0 space-y-3">
-                  <div className="relative flex items-center rounded-lg bg-slate-50 border border-slate-100 px-3 py-2.5 transition-colors focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50">
-                    <Search className="mr-2 h-3.5 w-3.5 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="搜索文献..."
-                      className="flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-                    />
-                  </div>
                   <button
                     onClick={() => uploadInputRef.current?.click()}
                     className="flex w-full items-center justify-center gap-2 py-2.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-all shadow-sm"
@@ -550,7 +548,12 @@ function HomeContent() {
                           <p className="px-2 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">文件夹</p>
                           {folders.map((folder) => {
                             const isExpanded = expandedFolders.has(folder.id);
-                            const folderPapers = papers.filter((p) => p.folder_id === folder.id);
+                            const folderPapers = papers
+                            .filter((p) => p.folder_id === folder.id)
+                            .sort((a, b) => {
+                              if (a.is_pinned !== b.is_pinned) return a.is_pinned ? -1 : 1;
+                              return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+                            });
                             return (
                               <div key={folder.id} className="group mb-2 p-2 bg-gray-50 rounded-lg border border-gray-100/80">
                                 {/* Folder row */}
@@ -611,7 +614,10 @@ function HomeContent() {
                                           <div className="flex items-start gap-2">
                                             <FileText className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
                                             <div className="flex-1 min-w-0">
-                                              <p className="truncate font-medium leading-snug">{paper.file_name}</p>
+                                              <p className="truncate font-medium leading-snug">
+                                                {paper.is_pinned && <Pin className={`inline h-3 w-3 mr-1 shrink-0 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />}
+                                                {paper.file_name}
+                                              </p>
                                             </div>
                                           </div>
                                         </div>
@@ -649,7 +655,10 @@ function HomeContent() {
                               <div className="flex items-start gap-2.5">
                                 <FileText className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />
                                 <div className="flex-1 min-w-0">
-                                  <p className="truncate font-medium leading-snug">{paper.file_name}</p>
+                                  <p className="truncate font-medium leading-snug">
+                                    {paper.is_pinned && <Pin className={`inline h-3 w-3 mr-1 shrink-0 ${isSelected ? "text-indigo-600" : "text-slate-400"}`} />}
+                                    {paper.file_name}
+                                  </p>
                                 </div>
                               </div>
                             </div>
@@ -1066,6 +1075,17 @@ function HomeContent() {
           >
             <Clock className="h-4 w-4 text-slate-400 shrink-0" />
             查看添加时间
+          </button>
+          <button
+            onClick={() => { const paper = papers.find((p) => p.id === contextMenu.paperId); if (paper) { togglePin(paper.id); toast(paper.is_pinned ? "已取消置顶" : "已置顶"); } setContextMenu(null); }}
+            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs text-slate-700 hover:bg-slate-50 transition-colors"
+          >
+            {papers.find((p) => p.id === contextMenu.paperId)?.is_pinned ? (
+              <PinOff className="h-4 w-4 text-slate-400 shrink-0" />
+            ) : (
+              <Pin className="h-4 w-4 text-slate-400 shrink-0" />
+            )}
+            {papers.find((p) => p.id === contextMenu.paperId)?.is_pinned ? "取消置顶" : "置顶文献"}
           </button>
           <div className="h-px bg-slate-100 my-1" />
           <button
