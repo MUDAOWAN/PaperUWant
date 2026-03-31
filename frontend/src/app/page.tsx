@@ -274,7 +274,11 @@ function HomeContent() {
 
     try {
       for (const file of files) {
-        const storagePath = `${user.id}/${Date.now()}_${file.name}`;
+        // 底层存储用安全的 ASCII 文件名（时间戳 + 随机哈希 + 原始扩展名）
+        const fileExt = file.name.split(".").pop() ?? "pdf";
+        const safeFileName = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+        const storagePath = `${user.id}/${safeFileName}`;
+
         const { error: uploadError } = await supabase.storage
           .from("PaperUWant_PDFS")
           .upload(storagePath, file);
