@@ -29,6 +29,8 @@ interface PaperState {
   currentPdfUrl: string | null;
   isLoadingCloud: boolean;
   usedStorageBytes: number;
+  // Context papers for AI chat
+  selectedContextPapers: Paper[];
   // Folder actions
   fetchFolders: (userId: string) => Promise<void>;
   createFolder: (name: string, userId: string) => Promise<void>;
@@ -48,6 +50,10 @@ interface PaperState {
   deletePaper: (paperId: string) => Promise<void>;
   setUsedStorageBytes: (bytes: number) => void;
   fetchUsedStorage: (userId: string) => Promise<void>;
+  // Context paper actions
+  addContextPaper: (paper: Paper) => void;
+  removeContextPaper: (paperId: string) => void;
+  setContextPapers: (papers: Paper[]) => void;
 }
 
 export const usePaperStore = create<PaperState>()(
@@ -59,9 +65,16 @@ export const usePaperStore = create<PaperState>()(
       currentPdfUrl: null,
       isLoadingCloud: false,
       usedStorageBytes: 0,
+      selectedContextPapers: [],
 
-      setCurrentPaper: (paper) =>
-        set({ currentPaper: paper, currentPdfUrl: paper?.pdf_url ?? null }),
+      setCurrentPaper: (paper) => {
+        // Focus Sync: auto-replace selectedContextPapers with the newly selected paper
+        set({
+          currentPaper: paper,
+          currentPdfUrl: paper?.pdf_url ?? null,
+          selectedContextPapers: paper ? [paper] : [],
+        });
+      },
 
       setCurrentPdfUrl: (url) => set({ currentPdfUrl: url }),
 
@@ -76,7 +89,7 @@ export const usePaperStore = create<PaperState>()(
         set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0 }),
 
       reset: () =>
-        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, isLoadingCloud: false }),
+        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, isLoadingCloud: false, selectedContextPapers: [] }),
 
       // ================= Folders =================
       fetchFolders: async (userId: string) => {
@@ -355,6 +368,20 @@ export const usePaperStore = create<PaperState>()(
           set({ usedStorageBytes: 0 });
         }
       },
+
+      // ================= Context Papers =================
+      addContextPaper: (paper) =>
+        set((state) => {
+          if (state.selectedContextPapers.some((p) => p.id === paper.id)) return state;
+          return { selectedContextPapers: [...state.selectedContextPapers, paper] };
+        }),
+
+      removeContextPaper: (paperId) =>
+        set((state) => ({
+          selectedContextPapers: state.selectedContextPapers.filter((p) => p.id !== paperId),
+        })),
+
+      setContextPapers: (papers) => set({ selectedContextPapers: papers }),
     }),
     {
       name: "paper-u-want-storage",

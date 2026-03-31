@@ -39,6 +39,9 @@ import {
   Clock,
   Pin,
   PinOff,
+  PlusCircle,
+  X,
+  ChevronUp,
 } from "lucide-react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import type { PanelImperativeHandle } from "react-resizable-panels";
@@ -49,6 +52,7 @@ import FolderRenameModal from "../components/FolderRenameModal";
 import DeleteConfirmModal from "../components/DeleteConfirmModal";
 import FolderAddPapersModal from "../components/FolderAddPapersModal";
 import MovePaperModal from "../components/MovePaperModal";
+import PaperSelectModal from "../components/PaperSelectModal";
 import { SettingsProvider, useSettings } from "../contexts/SettingsContext";
 import dynamic from "next/dynamic";
 import { useChat } from "@ai-sdk/react";
@@ -79,7 +83,7 @@ function preprocessMarkdownContent(text: string): string {
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin, selectedContextPapers, removeContextPaper, setContextPapers } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -92,6 +96,8 @@ function HomeContent() {
   const [addPapersModal, setAddPapersModal] = useState<{ isOpen: boolean; folder: any }>({ isOpen: false, folder: null });
   const [movePaperModal, setMovePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
   const [deletePaperModal, setDeletePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
+  const [paperSelectModal, setPaperSelectModal] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ paperId: string; x: number; y: number } | null>(null);
   const uncategorizedPapers = papers
     .filter((p) => !p.folder_id)
@@ -236,7 +242,7 @@ function HomeContent() {
   // Upload ref & handler
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const isUploadingRef = useRef(false);
-  const QUOTA_BYTES = 100 * 1024 * 1024; // 100 MB
+  const QUOTA_BYTES = 1000 * 1024 * 1024; // 1000 MB
 
   const handleUploadFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
@@ -253,58 +259,68 @@ function HomeContent() {
       return;
     }
 
-    const loadingToastId = crypto.randomUUID();
-    toast(
+    const { supabase } = await import("../lib/supabase");
+
+    const loadingToastId = toast(
       <div className="flex items-center text-blue-600 font-medium">
         <Loader2 className="animate-spin mr-2 w-4 h-4 text-blue-500" />
         正在将文件上传至云端，请稍等
       </div>,
-      { id: loadingToastId }
+      { duration: Infinity }
     );
 
     let successCount = 0;
-    const { supabase } = await import("../lib/supabase");
+    let failCount = 0;
 
-    for (const file of files) {
-      const storagePath = `${user.id}/${Date.now()}_${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from("PaperUWant_PDFS")
-        .upload(storagePath, file);
+    try {
+      for (const file of files) {
+        const storagePath = `${user.id}/${Date.now()}_${file.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from("PaperUWant_PDFS")
+          .upload(storagePath, file);
 
-      if (uploadError) {
-        toast(
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4 text-red-500 shrink-0" />
-            <span>"{file.name}" 上传失败</span>
-          </div>,
-          { id: loadingToastId }
-        );
-        isUploadingRef.current = false;
-        return;
+        if (uploadError) {
+          failCount++;
+          toast.error(`"${file.name}" 上传失败`, { duration: 4000 });
+          continue;
+        }
+
+        const { data: insertData, error: insertError } = await supabase
+          .from("papers")
+          .insert({ file_name: file.name, storage_path: storagePath, user_id: user.id })
+          .select()
+          .single();
+
+        if (!insertError && insertData) {
+          successCount++;
+        } else {
+          failCount++;
+        }
       }
 
-      const { data: insertData, error: insertError } = await supabase
-        .from("papers")
-        .insert({ file_name: file.name, storage_path: storagePath, user_id: user.id })
-        .select()
-        .single();
-
-      if (!insertError && insertData) {
-        successCount++;
+      // 统一的最终结果 toast（替换 loading）
+      if (failCount === 0 && successCount === files.length) {
+        toast.success(`上传成功 (${successCount}/${files.length})`, {
+          id: loadingToastId,
+          duration: 3000,
+        });
+      } else if (successCount > 0) {
+        toast.warning(`部分成功 ${successCount} 个，失败 ${failCount} 个`, {
+          id: loadingToastId,
+          duration: 4000,
+        });
+      } else {
+        toast.error("上传失败", { id: loadingToastId, duration: 4000 });
       }
+
+      await fetchCloudPapers(user.id);
+      await fetchUsedStorage(user.id);
+    } catch (err) {
+      console.error("[page] handleUploadFiles error:", err);
+      toast.error("上传过程中出现异常", { id: loadingToastId, duration: 4000 });
+    } finally {
+      isUploadingRef.current = false;
     }
-
-    toast(
-      <div className="flex items-center gap-2 text-green-600 font-medium">
-        <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
-        上传成功 ({successCount}/{files.length})
-      </div>,
-      { id: loadingToastId }
-    );
-
-    await fetchCloudPapers(user.id);
-    await fetchUsedStorage(user.id);
-    isUploadingRef.current = false;
   };
 
   // Rehydrate ref to prevent concurrent calls
@@ -680,7 +696,7 @@ function HomeContent() {
                           />
                         </div>
                         <p className="text-xs text-gray-500 mt-1.5 text-right">
-                          已用 {Math.round(usedStorageBytes / 1024 / 1024)} MB / 100 MB
+                          已用 {Math.round(usedStorageBytes / 1024 / 1024)} MB / 1000 MB
                         </p>
                       </div>
                     )}
@@ -964,10 +980,51 @@ function HomeContent() {
                       </div>
                     ) : null;
                   })()}
-                  <form onSubmit={handleSubmit} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-full px-4 py-3 transition-colors focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50">
-                    <button type="button" className="text-slate-400 hover:text-indigo-500 transition-colors shrink-0">
-                      <MessageSquare className="h-4 w-4" />
+
+                  {/* 胶囊标签区 + 添加按钮：同一行水平排列 */}
+                  <div className="flex flex-wrap items-center gap-2 mb-2">
+                    {/* 添加文献按钮：永远在最左侧 */}
+                    <button
+                      type="button"
+                      onClick={() => setPaperSelectModal(true)}
+                      className="inline-flex items-center gap-1 border border-dashed border-blue-400 text-blue-500 bg-transparent hover:bg-blue-50 hover:border-blue-500 text-xs rounded-full px-2.5 py-1 transition-colors"
+                    >
+                      <PlusCircle className="h-3.5 w-3.5 shrink-0" />
+                      <span>添加文献</span>
                     </button>
+                    {/* 文献胶囊列表 */}
+                    {(isExpanded ? selectedContextPapers : selectedContextPapers.slice(0, 6)).map((paper) => (
+                      <span
+                        key={paper.id}
+                        className="inline-flex items-center bg-blue-50 text-blue-600 text-xs rounded-full px-2.5 py-1"
+                      >
+                        <span className="max-w-[120px] truncate" title={paper.file_name}>
+                          {paper.file_name}
+                        </span>
+                        <button
+                          onClick={() => removeContextPaper(paper.id)}
+                          className="ml-1.5 text-blue-400 hover:text-blue-800 transition-colors"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                    {/* 折叠/展开按钮 */}
+                    {selectedContextPapers.length > 6 && (
+                      <button
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        className="inline-flex items-center text-xs text-blue-500 hover:text-blue-700 cursor-pointer px-1 transition-colors"
+                      >
+                        {isExpanded ? (
+                          <><ChevronUp className="w-3 h-3 mr-0.5" />收起</>
+                        ) : (
+                          <><ChevronDown className="w-3 h-3 mr-0.5" />展开 (+{selectedContextPapers.length - 6})</>
+                        )}
+                      </button>
+                    )}
+                  </div>
+
+                  <form onSubmit={handleSubmit} className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-full px-4 py-3 transition-colors focus-within:bg-white focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-50">
                     <input
                       ref={inputRef}
                       type="text"
@@ -1046,6 +1103,16 @@ function HomeContent() {
         folders={folders}
         onCancel={() => setMovePaperModal({ isOpen: false, paper: null })}
         onConfirm={handleConfirmMovePaper}
+      />
+      <PaperSelectModal
+        isOpen={paperSelectModal}
+        papers={papers}
+        selectedPapers={selectedContextPapers}
+        onCancel={() => setPaperSelectModal(false)}
+        onConfirm={(selected) => {
+          setContextPapers(selected);
+          setPaperSelectModal(false);
+        }}
       />
 
       {/* Context Menu */}
