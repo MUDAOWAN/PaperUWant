@@ -659,7 +659,7 @@ function HomeContent() {
                     </div>
 
                     {/* 容量条 — 固定底部 */}
-                    {usedStorageBytes > 0 && (
+                    {typeof usedStorageBytes === 'number' && usedStorageBytes >= 0 && (
                       <div className="shrink-0 px-4 pt-4 pb-4 border-t border-gray-100 bg-white/90 backdrop-blur-sm">
                         <p className="text-[11px] text-gray-400 mb-2">如需扩容请到设置绑定个人云盘</p>
                         <div className="w-full h-1.5 bg-gray-200 rounded-full overflow-hidden">
