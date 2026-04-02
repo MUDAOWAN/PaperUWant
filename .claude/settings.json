@@ -44,7 +44,14 @@
       "Bash(npm view:*)",
       "Bash(node -e \"const v=require\\(''''fs''''\\).readFileSync\\(''''/dev/stdin'''',''''utf8''''\\); const arr=JSON.parse\\(v\\); const v6=arr.filter\\(x=>x.startsWith\\(''''6''''\\)\\); console.log\\(''''Latest v6:'''', v6[v6.length-1]\\)\")",
       "Bash(node -e \"const { convertToModelMessages } = require\\(''ai''\\); const r = convertToModelMessages\\([{role:''user'', parts:[{type:''text'', text:''hi''}]}]\\); console.log\\(''isPromise:'', r instanceof Promise\\); if\\(r instanceof Promise\\) r.then\\(x => console.log\\(''resolved:'', Array.isArray\\(x\\)\\)\\).catch\\(e => console.log\\(''reject:'', e.message\\)\\)\")",
-      "Bash(node -e \"const { createOpenAI } = require\\(''@ai-sdk/openai''\\); const c = createOpenAI\\({ baseURL: ''https://test.com'', apiKey: ''test'', compatibility: ''compatible'' }\\); console.log\\(''runtime ok''\\)\")"
+      "Bash(node -e \"const { createOpenAI } = require\\(''@ai-sdk/openai''\\); const c = createOpenAI\\({ baseURL: ''https://test.com'', apiKey: ''test'', compatibility: ''compatible'' }\\); console.log\\(''runtime ok''\\)\")",
+      "Bash(awk 'NR>=140 && NR<=165' d:/PaperUWant/paper-backend/services/chat_service.py)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3)",
+      "Bash(python3 -m py_compile d:/PaperUWant/paper-backend/services/chat_service.py)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/chat_service.py'\\).read\\(\\)\\)\")",
+      "Bash(./venv/Scripts/python.exe -m py_compile services/chat_service.py)",
+      "Bash(./venv/Scripts/python.exe -c ':*)"
     ]
   }
 }

@@ -22,6 +22,13 @@ export interface Folder {
   created_at: string;
 }
 
+export interface HighlightTarget {
+  paperId: string;
+  pageNumber: number;
+  bbox: number[]; // [x0, y0, x1, y1]
+  timestamp: number;
+}
+
 interface PaperState {
   folders: Folder[];
   papers: Paper[];
@@ -31,6 +38,8 @@ interface PaperState {
   usedStorageBytes: number;
   // Context papers for AI chat
   selectedContextPapers: Paper[];
+  // Highlight state
+  highlightTarget: HighlightTarget | null;
   // Folder actions
   fetchFolders: (userId: string) => Promise<void>;
   createFolder: (name: string, userId: string) => Promise<void>;
@@ -54,6 +63,8 @@ interface PaperState {
   addContextPaper: (paper: Paper) => void;
   removeContextPaper: (paperId: string) => void;
   setContextPapers: (papers: Paper[]) => void;
+  // Highlight actions
+  setHighlightTarget: (paperId: string, pageNumber: number, bbox: number[]) => void;
 }
 
 export const usePaperStore = create<PaperState>()(
@@ -66,6 +77,7 @@ export const usePaperStore = create<PaperState>()(
       isLoadingCloud: false,
       usedStorageBytes: 0,
       selectedContextPapers: [],
+      highlightTarget: null,
 
       setCurrentPaper: (paper) => {
         // Focus Sync: auto-replace selectedContextPapers with the newly selected paper
@@ -86,10 +98,10 @@ export const usePaperStore = create<PaperState>()(
         })),
 
       clearPapers: () =>
-        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0 }),
+        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, highlightTarget: null }),
 
       reset: () =>
-        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, isLoadingCloud: false, selectedContextPapers: [] }),
+        set({ folders: [], papers: [], currentPaper: null, currentPdfUrl: null, usedStorageBytes: 0, isLoadingCloud: false, selectedContextPapers: [], highlightTarget: null }),
 
       // ================= Folders =================
       fetchFolders: async (userId: string) => {
@@ -340,6 +352,7 @@ export const usePaperStore = create<PaperState>()(
             papers: remaining,
             currentPaper: isCurrentDeleted ? null : currentPaper,
             currentPdfUrl: isCurrentDeleted ? null : get().currentPdfUrl,
+            highlightTarget: isCurrentDeleted ? null : get().highlightTarget,
           });
         } catch (err) {
           console.error("[paperStore] deletePaper exception:", err);
@@ -382,6 +395,9 @@ export const usePaperStore = create<PaperState>()(
         })),
 
       setContextPapers: (papers) => set({ selectedContextPapers: papers }),
+
+      setHighlightTarget: (paperId, pageNumber, bbox) =>
+        set({ highlightTarget: { paperId, pageNumber, bbox, timestamp: Date.now() } }),
     }),
     {
       name: "paper-u-want-storage",

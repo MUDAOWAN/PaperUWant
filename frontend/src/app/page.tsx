@@ -1,5 +1,5 @@
 "use client";
-
+import React from 'react';
 import { useState, useRef, useEffect } from "react";
 import { useAuthStore } from "../store/authStore";
 import { usePaperStore } from "../store/paperStore";
@@ -62,7 +62,7 @@ import remarkMath from "remark-math";
 import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
-import { parsePdfWithAI } from "../lib/api";
+import { parsePdfWithAI, chatWithRag } from "../lib/api";
 
 const PdfViewer = dynamic(() => import("../components/PdfViewer"), {
   ssr: false,
@@ -81,10 +81,84 @@ function preprocessMarkdownContent(text: string): string {
     .replace(/\\\(\s*([\s\S]*?)\s*\\\)/g, '$$1$');
 }
 
+// ── Citation Badge ─────────────────────────────────────────────────────────────
+function CitationBadge({
+  index,
+  sources,
+}: {
+  index: number;
+  sources: import("../lib/api").ChatSource[];
+}) {
+  const { setHighlightTarget } = usePaperStore();
+
+  const handleClick = () => {
+    const src = sources?.[index];
+    if (src?.metadata) {
+      const paperId = src.paper_id ?? usePaperStore.getState().currentPaper?.id ?? "";
+      setHighlightTarget(paperId, src.metadata.page_number, src.metadata.bbox);
+      console.log("[Citation]", index, src.metadata);
+    } else {
+      console.warn(`[CitationBadge] sources[${index}] not found`);
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label={`引用来源 ${index + 1}`}
+      className="inline-flex items-center justify-center w-5 h-5 mx-0.5 text-[10px] font-semibold text-blue-600 bg-blue-50/80 rounded-full cursor-pointer hover:bg-blue-100 transition-all align-text-top shadow-sm border border-blue-100/50"
+    >
+      {index + 1}
+    </button>
+  );
+}
+
+// ── Reconstruct text from ReactMarkdown children and split citations ───────────
+function renderWithCitations(children: React.ReactNode, sources: import("../lib/api").ChatSource[]): React.ReactNode {
+  const extractText = (nodes: React.ReactNode): string => {
+    return React.Children.toArray(nodes)
+      .map((child) => {
+        if (typeof child === "string") return child;
+        if (React.isValidElement(child)) {
+          const elem = child as React.ReactElement<any>;
+          if (typeof elem.props?.children === "string") return elem.props.children;
+          return extractText(elem.props?.children ?? "");
+        }
+        return "";
+      })
+      .join("");
+  };
+
+  const text = extractText(children);
+  const parts = text.split(/(\[\d+\])/g);
+
+  if (parts.length === 1 && !parts[0].match(/\[\d+\]/)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <>
+      {parts.map((part, i) => {
+        const match = part.match(/^\[(\d+)\]$/);
+        if (match) {
+          return (
+            <CitationBadge
+              key={i}
+              index={parseInt(match[1], 10) - 1}
+              sources={sources}
+            />
+          );
+        }
+        return <React.Fragment key={i}>{part}</React.Fragment>;
+      })}
+    </>
+  );
+}
+
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin, selectedContextPapers, removeContextPaper, setContextPapers } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin, selectedContextPapers, removeContextPaper, setContextPapers, setHighlightTarget } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -98,6 +172,8 @@ function HomeContent() {
   const [movePaperModal, setMovePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
   const [deletePaperModal, setDeletePaperModal] = useState<{ isOpen: boolean; paper: any }>({ isOpen: false, paper: null });
   const [paperSelectModal, setPaperSelectModal] = useState(false);
+  // RAG chat messages (managed manually, merged with useChat messages for rendering)
+  const [ragMessages, setRagMessages] = useState<any[]>([]);
   const [isExpanded, setIsExpanded] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ paperId: string; x: number; y: number } | null>(null);
   const uncategorizedPapers = papers
@@ -393,11 +469,58 @@ function HomeContent() {
   // auto-scroll — 依赖 messages 和 isLoading 确保锚点始终在底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+  }, [messages, ragMessages, isLoading]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Interceptor: block if apiKey is not configured
+    if (!input.trim()) return;
+
+    // ── RAG 模式：选中了文献时走 FastAPI RAG 接口 ───────────────────────────
+    if (selectedContextPapers.length > 0) {
+      const query = input.trim();
+      setInput("");
+      const userMsgId = `rag-user-${Date.now()}`;
+      const assistantMsgId = `rag-assistant-${Date.now()}`;
+
+      // Optimistically add user message
+      setRagMessages((prev) => [
+        ...prev,
+        { id: userMsgId, role: "user", content: query, sources: [] },
+      ]);
+
+      // Add pending assistant message
+      setRagMessages((prev) => [
+        ...prev,
+        { id: assistantMsgId, role: "assistant", content: "", sources: [] },
+      ]);
+
+      try {
+        const result = await chatWithRag(
+          selectedContextPapers.map((p) => p.id),
+          query,
+        );
+        // Update assistant message with answer + sources
+        setRagMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, content: result.answer, sources: result.sources }
+              : m,
+          ),
+        );
+      } catch (err) {
+        console.error("[RAG] chatWithRag failed:", err);
+        setRagMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId
+              ? { ...m, content: `RAG 请求失败：${err instanceof Error ? err.message : String(err)}` }
+              : m,
+          ),
+        );
+      }
+      return;
+    }
+
+    // ── 普通模式：无文献选中，走 useChat 流 ──────────────────────────────────
     if (!apiKey.trim()) {
       setShowApiKeyToast(true);
       openSettings();
@@ -832,7 +955,7 @@ function HomeContent() {
               {/* 聊天记录区 / 智能笔记模式 */}
               {rightPanelMode === "chat" ? (
                 <div className="flex-1 overflow-y-auto overflow-x-hidden flex flex-col p-4 gap-6 min-w-0">
-                  {messages.length === 0 && (
+                  {messages.length === 0 && ragMessages.length === 0 && (
                     <div className="flex w-full justify-start items-start gap-3">
                       <div className="w-8 h-8 rounded-full bg-teal-500 shrink-0 mt-0.5 shadow-md flex items-center justify-center">
                         <Sparkles className="h-4 w-4 text-white" />
@@ -842,11 +965,13 @@ function HomeContent() {
                       </div>
                     </div>
                   )}
-                  {messages.map((msg: any) => {
+                  {[...ragMessages, ...messages].map((msg: any) => {
                     const textContent = typeof msg.content === 'string' ? msg.content : (msg.parts?.find((p: any) => p.type === 'text') as any)?.text || '';
                     // 过滤 <think> 推理标签（流式传输中断时也可能缺少闭合标签）
                     const displayContent = textContent.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "");
                     const isEmptyAssistant = msg.role === "assistant" && !displayContent.trim();
+                    // RAG messages carry their own sources; non-RAG messages have an empty array
+                    const msgSources: import("../lib/api").ChatSource[] = Array.isArray(msg.sources) ? msg.sources : [];
                     return (
                       <div key={msg.id} className={`flex w-full ${msg.role === "user" ? "justify-end" : "justify-start"} items-start gap-3`}>
                         {msg.role === "assistant" && (
@@ -927,7 +1052,9 @@ function HomeContent() {
                                   <strong className="font-semibold text-slate-900">{children}</strong>
                                 ),
                                 p: ({ children }) => (
-                                  <p className="leading-[1.75] text-[13px] text-slate-700">{children}</p>
+                                  <p className="leading-[1.75] text-[13px] text-slate-700">
+                                    {renderWithCitations(children, msgSources)}
+                                  </p>
                                 ),
                                 ul: ({ children }) => (
                                   <ul className="ml-5 space-y-1">{children}</ul>

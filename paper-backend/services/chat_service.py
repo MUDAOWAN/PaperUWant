@@ -31,7 +31,7 @@ def _fetch_query_embedding(query: str) -> list[float] | None:
     api_key = os.getenv("MINIMAX_API_KEY", "").strip()
     group_id = os.getenv("MINIMAX_GROUP_ID", "").strip()
     if not api_key or not group_id:
-        print("❌ [_fetch_query_embedding] MINIMAX_API_KEY or MINIMAX_GROUP_ID not set")
+        print("[-] MINIMAX_API_KEY or MINIMAX_GROUP_ID not set")
         return None
 
     headers = {
@@ -52,10 +52,10 @@ def _fetch_query_embedding(query: str) -> list[float] | None:
         resp_json = response.json()
         if response.status_code == 200 and "vectors" in resp_json:
             return resp_json["vectors"][0]
-        print(f"❌ [_fetch_query_embedding] 原始响应: {response.text[:500]}")
+        print(f"[-] _fetch_query_embedding failed: {response.text[:500]}")
         return None
     except Exception as e:
-        print(f"❌ [_fetch_query_embedding] 请求失败: {str(e)}")
+        print(f"[-] _fetch_query_embedding exception: {str(e)}")
         return None
 
 
@@ -80,6 +80,7 @@ def search_chunks(query_embedding: list[float], top_k: int, paper_ids: list[str]
             return [
                 {
                     "content": row["content"],
+                    "paper_id": row.get("paper_id"),
                     "metadata": json.loads(row["metadata"])
                         if isinstance(row["metadata"], str)
                         else row["metadata"],
@@ -88,7 +89,7 @@ def search_chunks(query_embedding: list[float], top_k: int, paper_ids: list[str]
             ]
         return []
     except Exception as e:
-        print(f"❌ [search_chunks] RPC 调用失败: {str(e)}")
+        print(f"[-] search_chunks RPC failed: {str(e)}")
         return []
 
 
@@ -101,7 +102,7 @@ def generate_answer(query: str, contexts: list[dict[str, Any]]) -> dict[str, Any
     api_key = os.getenv("MINIMAX_API_KEY", "").strip()
     group_id = os.getenv("MINIMAX_GROUP_ID", "").strip()
     if not api_key or not group_id:
-        print("❌ [Chat] MINIMAX_API_KEY or MINIMAX_GROUP_ID not set in .env")
+        print("[-] MINIMAX_API_KEY or MINIMAX_GROUP_ID not set in .env")
         return {"answer": "服务配置错误，请联系管理员。", "sources": []}
 
     # Build formatted contexts string with [1], [2], ... citation markers
@@ -125,6 +126,19 @@ def generate_answer(query: str, contexts: list[dict[str, Any]]) -> dict[str, Any
         f"{query}"
     )
 
+    # Safety truncation: prevent payload too large (30k chars)
+    MAX_CONTEXT_LEN = 30_000
+    if len(formatted_contexts) > MAX_CONTEXT_LEN:
+        print(f"[*] Context length {len(formatted_contexts)} exceeds {MAX_CONTEXT_LEN}, truncating")
+        truncated = formatted_contexts[:MAX_CONTEXT_LEN]
+        user_message = (
+            f"以下是系统检索到的 [参考资料]：\n"
+            f"{truncated}\n\n"
+            f"[...以上内容已被截断...]"
+            f"请根据上述资料，回答我的问题：\n"
+            f"{query}"
+        )
+
     messages = [
         {"role": "system", "content": system_message},
         {"role": "user", "content": user_message},
@@ -140,37 +154,63 @@ def generate_answer(query: str, contexts: list[dict[str, Any]]) -> dict[str, Any
     }
     url = f"{CHAT_URL}?GroupId={group_id}"
 
+    # Request payload logging
+    last_msg = payload["messages"][-1]
+    token_estimate = len(last_msg["content"]) // 3
+    print("\n========== [RAG API] Outgoing Payload ==========")
+    print(f"[Model] {CHAT_MODEL} | [URL] {url}")
+    print(f"[Token estimate] ~{token_estimate} | chars={len(last_msg['content'])}")
+    print(f"[User Message]:\n{json.dumps(last_msg, ensure_ascii=False, indent=2)}")
+    print("================================================\n")
+
     try:
         with httpx.Client(timeout=60.0) as client:
             response = client.post(url, headers=headers, json=payload)
 
         raw_text = response.text
-        print(f"📡 [Chat] status={response.status_code} body={raw_text[:800]}")
+
+        # Enhanced error detection
+        if response.status_code != 200:
+            print(f"[-] MiniMax API Error status={response.status_code} body={raw_text}")
+            return {
+                "answer": f"抱歉，模型接口返回异常（状态码 {response.status_code}），请稍后重试。",
+                "sources": contexts,
+            }
 
         resp_json = response.json()
 
-        # Parse MiniMax chat response
-        if response.status_code == 200 and "choices" in resp_json:
+        if resp_json.get("error"):
+            err_detail = json.dumps(resp_json.get("error"), ensure_ascii=False)
+            print(f"[-] MiniMax API JSON error: {err_detail}")
+            return {
+                "answer": f"抱歉，模型接口返回错误：{err_detail[:200]}",
+                "sources": contexts,
+            }
+
+        print(f"[+] MiniMax status={response.status_code} body={raw_text[:800]}")
+
+        # Parse chat response
+        if "choices" in resp_json:
             choice = resp_json["choices"][0]
             if "message" in choice:
                 raw_answer = choice["message"].get("content", "")
-                # Strip <think>...</think> chains from the answer
+                # Strip <think>...</think> chains
                 clean_answer = re.sub(r'<think>[\s\S]*?</think>\s*', '', raw_answer)
                 return {
                     "answer": clean_answer,
                     "sources": contexts,
                 }
 
-        # Fallback: return raw error
-        print(f"❌ [Chat API Error] 原始响应: {raw_text}")
+        # Fallback: unhandled response shape
+        print(f"[-] Chat API unexpected response: {raw_text[:500]}")
         return {
             "answer": f"抱歉，模型返回了异常响应：{raw_text[:200]}",
             "sources": contexts,
         }
 
     except httpx.HTTPStatusError as e:
-        print(f"❌ [Chat HTTP Error] {e.response.status_code} — 原始响应: {e.response.text}")
+        print(f"[-] Chat HTTP Error {e.response.status_code} body={e.response.text}")
         return {"answer": f"请求失败：{e.response.status_code}", "sources": []}
     except Exception as e:
-        print(f"❌ [Chat Network Exception] 调用 MiniMax Chat 失败: {str(e)}")
+        print(f"[-] Chat exception: {str(e)}")
         return {"answer": f"网络错误：{str(e)}", "sources": []}
