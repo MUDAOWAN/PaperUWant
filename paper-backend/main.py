@@ -4,10 +4,13 @@ PaperUWant FastAPI backend — PDF spatial parsing service.
 
 from fastapi import FastAPI, Form, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from typing import Any
+
 from pydantic import BaseModel
 
 from services.pdf_parser import extract_text_with_bboxes
 from services.vector_store import process_and_store_chunks
+from services.chat_service import generate_answer, search_chunks, _fetch_query_embedding
 
 
 # ── App init ──────────────────────────────────────────────────────────────────
@@ -37,6 +40,17 @@ class ProcessPaperResponse(BaseModel):
     total_blocks: int
     total_pages: int
     blocks: list[BBoxBlock]
+
+
+class ChatRequest(BaseModel):
+    query: str
+    paper_ids: list[str]
+    top_k: int = 5
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[dict[str, Any]]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -82,3 +96,20 @@ async def process_paper(
         total_pages=len(pages),
         blocks=[BBoxBlock(**b) for b in blocks],
     )
+
+
+@app.post("/api/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest) -> ChatResponse:
+    """
+    RAG-powered chat endpoint:
+    1. Embed the query.
+    2. Search Supabase for relevant chunks across multiple papers.
+    3. Call MiniMax chat model with enriched context.
+    """
+    query_embedding = _fetch_query_embedding(request.query)
+    if query_embedding is None:
+        raise HTTPException(status_code=500, detail="Failed to embed query")
+
+    contexts = search_chunks(query_embedding, request.top_k, request.paper_ids)
+    result = generate_answer(request.query, contexts)
+    return ChatResponse(**result)
