@@ -62,6 +62,7 @@ import remarkMath from "remark-math";
 import rehypeRaw from "rehype-raw";
 import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
+import { parsePdfWithAI } from "../lib/api";
 
 const PdfViewer = dynamic(() => import("../components/PdfViewer"), {
   ssr: false,
@@ -297,6 +298,14 @@ function HomeContent() {
 
         if (!insertError && insertData) {
           successCount++;
+          // Fire-and-forget: 同步调用 FastAPI 空间解析（不阻塞上传流程）
+          parsePdfWithAI(file, insertData.id)
+            .then((result) => {
+              console.log("🎉 AI 后端解析成功，坐标数据:", result);
+            })
+            .catch((err) => {
+              console.warn("[page] FastAPI 解析失败（不影响上传）:", err.message);
+            });
         } else {
           failCount++;
         }
