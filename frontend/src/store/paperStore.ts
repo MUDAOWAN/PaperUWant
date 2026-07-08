@@ -80,11 +80,19 @@ export const usePaperStore = create<PaperState>()(
       highlightTarget: null,
 
       setCurrentPaper: (paper) => {
-        // Focus Sync: auto-replace selectedContextPapers with the newly selected paper
+        const { currentPaper, currentPdfUrl, papers } = get();
+        const existingPaper = paper ? papers.find((p) => p.id === paper.id) : null;
+        const resolvedPaper = existingPaper ?? paper;
+        const existingUrl =
+          paper && currentPaper?.id === paper.id
+            ? currentPdfUrl
+            : null;
+        const nextUrl = resolvedPaper?.pdf_url || existingUrl || null;
+
         set({
-          currentPaper: paper,
-          currentPdfUrl: paper?.pdf_url ?? null,
-          selectedContextPapers: paper ? [paper] : [],
+          currentPaper: resolvedPaper,
+          currentPdfUrl: nextUrl,
+          selectedContextPapers: resolvedPaper ? [resolvedPaper] : [],
         });
       },
 

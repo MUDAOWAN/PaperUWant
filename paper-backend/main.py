@@ -1,22 +1,21 @@
 """
-PaperUWant FastAPI backend — PDF spatial parsing service.
+PaperUWant FastAPI backend: PDF spatial parsing and RAG service.
 """
 
-from fastapi import FastAPI, Form, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
 from typing import Any
 
-from pydantic import BaseModel
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict
 
+from services.chat_service import ChatServiceError
 from services.pdf_parser import extract_text_with_bboxes
-from services.vector_store import process_and_store_chunks
-from services.chat_service import generate_answer, search_chunks, _fetch_query_embedding
+from services.rag_pipeline import RagPipelineError, answer_question
+from services.vector_store import VectorStoreError, process_and_store_chunks
 
 
-# ── App init ──────────────────────────────────────────────────────────────────
 app = FastAPI(title="PaperUWant Backend", version="0.1.0")
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -29,7 +28,6 @@ app.add_middleware(
 )
 
 
-# ── Schemas ───────────────────────────────────────────────────────────────────
 class BBoxBlock(BaseModel):
     text: str
     page_number: int
@@ -39,13 +37,19 @@ class BBoxBlock(BaseModel):
 class ProcessPaperResponse(BaseModel):
     total_blocks: int
     total_pages: int
+    stored_chunks: int
     blocks: list[BBoxBlock]
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
     query: str
     paper_ids: list[str]
-    top_k: int = 5
+    top_k: int = 12
+    api_key: str
+    base_url: str | None = None
+    model_name: str
 
 
 class ChatResponse(BaseModel):
@@ -53,10 +57,8 @@ class ChatResponse(BaseModel):
     sources: list[dict[str, Any]]
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
 @app.get("/health")
-def health() -> dict:
-    """Smoke-test endpoint."""
+def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
@@ -66,8 +68,10 @@ async def process_paper(
     paper_id: str = Form(...),
 ):
     """
-    Accept an uploaded PDF, extract text blocks with bounding-box
-    coordinates, embed them via MiniMax, and store in Supabase.
+    Parse a PDF, generate embeddings, and store chunks in Supabase.
+
+    Fails explicitly if embedding generation or chunk storage fails, so the
+    frontend and logs do not mistake a partial parse for a complete RAG ingest.
     """
     if file.content_type != "application/pdf":
         raise HTTPException(status_code=400, detail="Only PDF files are accepted")
@@ -76,40 +80,40 @@ async def process_paper(
         pdf_bytes = await file.read()
         blocks = extract_text_with_bboxes(pdf_bytes)
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"PDF parsing failed: {exc}")
+        raise HTTPException(status_code=500, detail=f"PDF parsing failed: {exc}") from exc
 
     if not blocks:
         raise HTTPException(status_code=422, detail="No text blocks could be extracted from this PDF")
 
-    # Embed & store chunks in Supabase (non-blocking within this handler)
     try:
-        stored = process_and_store_chunks(paper_id, blocks)
-        print(f"[process_paper] Stored {stored} chunks for paper {paper_id}")
+        stored_chunks = process_and_store_chunks(paper_id, blocks)
+    except VectorStoreError as exc:
+        raise HTTPException(status_code=502, detail=f"Vector store failed: {exc}") from exc
     except Exception as exc:
-        # Log but do not fail — PDF parse result is still returned
-        print(f"[process_paper] Vector store error (non-fatal): {exc}")
+        raise HTTPException(status_code=500, detail=f"Vector store failed: {exc}") from exc
 
     pages = {b["page_number"] for b in blocks}
-
     return ProcessPaperResponse(
         total_blocks=len(blocks),
         total_pages=len(pages),
+        stored_chunks=stored_chunks,
         blocks=[BBoxBlock(**b) for b in blocks],
     )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
-    """
-    RAG-powered chat endpoint:
-    1. Embed the query.
-    2. Search Supabase for relevant chunks across multiple papers.
-    3. Call MiniMax chat model with enriched context.
-    """
-    query_embedding = _fetch_query_embedding(request.query)
-    if query_embedding is None:
-        raise HTTPException(status_code=500, detail="Failed to embed query")
-
-    contexts = search_chunks(query_embedding, request.top_k, request.paper_ids)
-    result = generate_answer(request.query, contexts)
+    try:
+        result = answer_question(
+            query=request.query,
+            paper_ids=request.paper_ids,
+            top_k=request.top_k,
+            api_key=request.api_key,
+            base_url=request.base_url,
+            model_name=request.model_name,
+        )
+    except RagPipelineError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except ChatServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     return ChatResponse(**result)

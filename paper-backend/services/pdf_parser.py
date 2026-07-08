@@ -8,6 +8,15 @@ from typing import Any
 import fitz  # PyMuPDF
 
 
+def _clean_pdf_text(text: str) -> str:
+    """Remove control characters that PostgreSQL text fields cannot store."""
+    return "".join(
+        ch
+        for ch in text
+        if ch in ("\n", "\r", "\t") or ord(ch) >= 32
+    ).strip()
+
+
 def extract_text_with_bboxes(file_path_or_bytes: str | bytes) -> list[dict[str, Any]]:
     """
     Parse a PDF and extract text blocks with their physical bounding boxes.
@@ -41,9 +50,10 @@ def extract_text_with_bboxes(file_path_or_bytes: str | bytes) -> list[dict[str, 
 
             # block_type 0 = text, 1 = image, 2 = "container"
             # We only care about actual text blocks with non-empty content
-            if block_type == 0 and text.strip():
+            clean_text = _clean_pdf_text(text)
+            if block_type == 0 and clean_text:
                 blocks.append({
-                    "text": text.strip(),
+                    "text": clean_text,
                     "page_number": page_num + 1,   # 1-indexed
                     "bbox": [x0, y0, x1, y1],
                 })

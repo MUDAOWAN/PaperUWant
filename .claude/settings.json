@@ -51,7 +51,20 @@
       "Bash(python3 -m py_compile d:/PaperUWant/paper-backend/services/chat_service.py)",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('services/chat_service.py'\\).read\\(\\)\\)\")",
       "Bash(./venv/Scripts/python.exe -m py_compile services/chat_service.py)",
-      "Bash(./venv/Scripts/python.exe -c ':*)"
+      "Bash(./venv/Scripts/python.exe -c ':*)",
+      "Read(//c/Users/19129/AppData/Roaming/Code/User/**)",
+      "Bash(head-20)",
+      "Bash(ls -la ~/.claude/2>/dev/null | head -30)",
+      "Read(//c/Users/19129/.claude/**)",
+      "Bash(ls -la ~/AppData/Roaming/Code/User/ 2>/dev/null |head -20)",
+      "Bash(ls -la /c/Users/19129/.claude/)",
+      "Read(//c/Users/19129/.claude//**)",
+      "Bash(reg query *)",
+      "Bash(reg delete *)",
+      "Read(//c/Users/19129/**)"
+    ],
+    "additionalDirectories": [
+      "C:\\Users\\19129\\.claude"
     ]
   }
 }

@@ -5,6 +5,20 @@
 
 const FASTAPI_BASE = "http://localhost:8001";
 
+async function readErrorDetail(res: Response): Promise<string> {
+  const text = await res.text();
+  if (!text) return res.statusText || "Request failed";
+
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    if (typeof parsed.detail === "string") return parsed.detail;
+  } catch {
+    // Fall through to the original response text.
+  }
+
+  return text;
+}
+
 export interface BBoxBlock {
   text: string;
   page_number: number;
@@ -36,7 +50,7 @@ export async function parsePdfWithAI(file: File, paperId: string): Promise<Parse
   });
 
   if (!res.ok) {
-    const detail = await res.text();
+    const detail = await readErrorDetail(res);
     throw new Error(`FastAPI /process_paper failed (${res.status}): ${detail}`);
   }
 
@@ -67,16 +81,28 @@ export interface ChatResult {
 export async function chatWithRag(
   paperIds: string[],
   query: string,
-  topK = 5,
+  options: {
+    apiKey: string;
+    baseUrl: string;
+    modelName: string;
+  },
+  topK = 12,
 ): Promise<ChatResult> {
   const res = await fetch(`${FASTAPI_BASE}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ paper_ids: paperIds, query, top_k: topK }),
+    body: JSON.stringify({
+      paper_ids: paperIds,
+      query,
+      top_k: topK,
+      api_key: options.apiKey,
+      base_url: options.baseUrl,
+      model_name: options.modelName,
+    }),
   });
 
   if (!res.ok) {
-    const detail = await res.text();
+    const detail = await readErrorDetail(res);
     throw new Error(`FastAPI /api/chat failed (${res.status}): ${detail}`);
   }
 

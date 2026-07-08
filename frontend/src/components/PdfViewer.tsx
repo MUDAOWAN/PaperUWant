@@ -8,7 +8,10 @@ import { FileText, AlertCircle } from "lucide-react";
 import SelectionToolbar from "./SelectionToolbar";
 import { usePaperStore } from "../store/paperStore";
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = new URL(
+  "pdfjs-dist/build/pdf.worker.min.mjs",
+  import.meta.url
+).toString();
 
 interface PdfViewerProps {
   url?: string;
@@ -22,6 +25,36 @@ interface PageSize {
   scale: number;
 }
 
+interface HighlightOverlayProps {
+  bbox: number[];
+  scale: number;
+}
+
+function HighlightOverlay({ bbox, scale }: HighlightOverlayProps) {
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setTimeout(() => setVisible(false), 10_000);
+    return () => clearTimeout(timer);
+  }, [visible]);
+
+  if (!visible) return null;
+
+  const left = bbox[0] * scale;
+  const top = bbox[1] * scale;
+  const width = (bbox[2] - bbox[0]) * scale;
+  const height = (bbox[3] - bbox[1]) * scale;
+
+  return (
+    <div
+      className="absolute bg-blue-400/25 border-l-2 border-blue-500 rounded-sm pointer-events-none animate-in fade-in zoom-in-95 duration-500 ease-out"
+      style={{ left, top, width, height }}
+      aria-hidden="true"
+    />
+  );
+}
+
 export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerProps) {
   const { currentPaper, setCurrentPaper, highlightTarget } = usePaperStore();
 
@@ -31,10 +64,13 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
   const [selection, setSelection] = useState<{ text: string; rect: DOMRect } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [pdfWidth, setPdfWidth] = useState(800);
-  // Track each page's rendered size (index = pageNumber - 1)
   const [pageSizes, setPageSizes] = useState<PageSize[]>([]);
 
-  // ── Responsive width ──────────────────────────────────────────────────────
+  const targetPaperId = highlightTarget?.paperId;
+  const targetPageNumber = highlightTarget?.pageNumber;
+  const targetTimestamp = highlightTarget?.timestamp;
+  const targetBbox = highlightTarget?.bbox;
+
   useEffect(() => {
     const updateWidth = () => {
       if (containerRef.current) {
@@ -46,29 +82,26 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     return () => window.removeEventListener("resize", updateWidth);
   }, []);
 
-  // ── Cross-paper switching: when highlightTarget paper differs, switch doc ──
   useEffect(() => {
-    if (!highlightTarget) return;
-    if (highlightTarget.paperId !== currentPaper?.id) {
+    if (!targetPaperId) return;
+    if (targetPaperId !== currentPaper?.id) {
       const { papers } = usePaperStore.getState();
-      const targetPaper = papers.find((p) => p.id === highlightTarget.paperId);
+      const targetPaper = papers.find((p) => p.id === targetPaperId);
       if (targetPaper) {
         setCurrentPaper(targetPaper);
       }
     }
-  }, [highlightTarget?.paperId]);
+  }, [targetPaperId, currentPaper?.id, setCurrentPaper]);
 
-  // ── Scroll once currentPdfUrl is available (url loaded → pages rendered) ──
   useEffect(() => {
     if (!url || !containerRef.current) return;
-    // Wait for numPages to be set (pages rendered), then scroll
     if (!numPages) return;
-    if (!highlightTarget) return;
-    if (highlightTarget.paperId !== currentPaper?.id) return;
+    if (!targetPaperId || !targetPageNumber) return;
+    if (targetPaperId !== currentPaper?.id) return;
 
     const timer = setTimeout(() => {
       const el = containerRef.current?.querySelector(
-        `[data-page-number="${highlightTarget.pageNumber}"]`
+        `[data-page-number="${targetPageNumber}"]`
       ) as HTMLElement | null;
       if (el) {
         el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -76,11 +109,17 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [url, numPages, highlightTarget?.paperId, highlightTarget?.pageNumber, currentPaper?.id]);
+  }, [url, numPages, targetPaperId, targetPageNumber, currentPaper?.id]);
 
-  // Reset page sizes when URL changes
   useEffect(() => {
-    setPageSizes([]);
+    const timer = window.setTimeout(() => {
+      setNumPages(null);
+      setPageSizes([]);
+      setError(null);
+      setLoading(Boolean(url));
+    }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [url]);
 
   const handleMouseUp = useCallback(() => {
@@ -140,59 +179,10 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     window.getSelection()?.removeAllRanges();
   };
 
-  // ── Highlight overlay for a single page ───────────────────────────────────
-  function HighlightOverlay({
-    pageNumber,
-    bbox,
-    pageWidth,
-    pageHeight,
-    scale,
-  }: {
-    pageNumber: number;
-    bbox: number[];
-    pageWidth: number;
-    pageHeight: number;
-    scale: number;
-  }) {
-    const [visible, setVisible] = useState(true);
-
-    useEffect(() => {
-      if (!visible) return;
-      const timer = setTimeout(() => setVisible(false), 10_000);
-      return () => clearTimeout(timer);
-    }, [visible]);
-
-    // Re-show when highlightTarget updates (new citation)
-    useEffect(() => {
-      if (highlightTarget?.timestamp) {
-        setVisible(true);
-      }
-    }, [highlightTarget?.timestamp]);
-
-    if (!visible) return null;
-
-    // Convert PDF coordinates → pixel offset within the page div.
-    // PDF origin is bottom-left; screen origin is top-left.
-    // bbox = [x0, y0, x1, y1] in PDF points (origin bottom-left)
-    const left = bbox[0] * scale;
-    const top = bbox[1] * scale;
-    const width = (bbox[2] - bbox[0]) * scale;
-    const height = (bbox[3] - bbox[1]) * scale;
-
-    return (
-      <div
-        className="absolute bg-blue-400/25 border-l-2 border-blue-500 rounded-sm pointer-events-none animate-in fade-in zoom-in-95 duration-500 ease-out"
-        style={{ left, top, width, height }}
-        aria-hidden="true"
-      />
-    );
-  }
-
-  // ── Render a single page with optional highlight overlay ──────────────────
   function renderPage(pageNum: number, size: PageSize | undefined) {
     const isHighlighted =
-      highlightTarget?.paperId === currentPaper?.id &&
-      highlightTarget?.pageNumber === pageNum;
+      targetPaperId === currentPaper?.id &&
+      targetPageNumber === pageNum;
 
     return (
       <div
@@ -224,12 +214,10 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
             </div>
           }
         />
-        {isHighlighted && size && (
+        {isHighlighted && size && targetBbox && (
           <HighlightOverlay
-            pageNumber={pageNum}
-            bbox={highlightTarget!.bbox}
-            pageWidth={size.width}
-            pageHeight={size.height}
+            key={targetTimestamp ?? 0}
+            bbox={targetBbox}
             scale={pdfWidth / size.width}
           />
         )}
@@ -237,7 +225,6 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     );
   }
 
-  // ── Empty state ───────────────────────────────────────────────────────────
   if (!url) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-[#F9FAFB]">
@@ -283,7 +270,7 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
           }
           className="flex flex-col items-center"
         >
-          {Array.from(new Array(numPages || 0), (el, index) => {
+          {Array.from(new Array(numPages || 0), (_el, index) => {
             const pageNum = index + 1;
             return renderPage(pageNum, pageSizes[index]);
           })}

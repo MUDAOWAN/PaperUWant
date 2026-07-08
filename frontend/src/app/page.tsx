@@ -115,13 +115,19 @@ function CitationBadge({
 
 // ── Reconstruct text from ReactMarkdown children and split citations ───────────
 function renderWithCitations(children: React.ReactNode, sources: import("../lib/api").ChatSource[]): React.ReactNode {
+  // Extract all text including from deeply nested elements (e.g. CitationBadge inside <li>)
   const extractText = (nodes: React.ReactNode): string => {
     return React.Children.toArray(nodes)
       .map((child) => {
         if (typeof child === "string") return child;
         if (React.isValidElement(child)) {
           const elem = child as React.ReactElement<any>;
-          if (typeof elem.props?.children === "string") return elem.props.children;
+          // CitationBadge renders as [n] — extract its label directly
+          if (elem.type === CitationBadge) {
+            const idx = elem.props?.index;
+            return idx !== undefined ? `[${idx + 1}]` : "";
+          }
+          // Recurse into composite elements
           return extractText(elem.props?.children ?? "");
         }
         return "";
@@ -130,6 +136,7 @@ function renderWithCitations(children: React.ReactNode, sources: import("../lib/
   };
 
   const text = extractText(children);
+  // Split on single [n] OR consecutive [n][m] patterns
   const parts = text.split(/(\[\d+\])/g);
 
   if (parts.length === 1 && !parts[0].match(/\[\d+\]/)) {
@@ -174,6 +181,9 @@ function HomeContent() {
   const [paperSelectModal, setPaperSelectModal] = useState(false);
   // RAG chat messages (managed manually, merged with useChat messages for rendering)
   const [ragMessages, setRagMessages] = useState<any[]>([]);
+  const messageOrderRef = useRef<Map<string, number>>(new Map());
+  const pendingAiMessageOrdersRef = useRef<number[]>([]);
+  const nextMessageOrderRef = useRef(0);
   const [isExpanded, setIsExpanded] = useState(false);
   const [contextMenu, setContextMenu] = useState<{ paperId: string; x: number; y: number } | null>(null);
   const uncategorizedPapers = papers
@@ -187,6 +197,20 @@ function HomeContent() {
   const leftPanelRef = useRef<PanelImperativeHandle>(null);
   const rightPanelRef = useRef<PanelImperativeHandle>(null);
   const { apiKey, baseUrl, modelName, systemPrompt, openSettings } = useSettings();
+
+  const getMessageOrder = (id: string) => {
+    const existing = messageOrderRef.current.get(id);
+    if (existing !== undefined) return existing;
+    const next = pendingAiMessageOrdersRef.current.shift() ?? nextMessageOrderRef.current++;
+    messageOrderRef.current.set(id, next);
+    return next;
+  };
+
+  const reserveAiMessageOrders = () => {
+    const userOrder = nextMessageOrderRef.current++;
+    const assistantOrder = nextMessageOrderRef.current++;
+    pendingAiMessageOrdersRef.current.push(userOrder, assistantOrder);
+  };
 
   // Logout handler
   const handleLogout = async () => {
@@ -431,10 +455,10 @@ function HomeContent() {
 
   // Rehydrate signed URL when currentPaper id changes (use stable id, not object ref)
   useEffect(() => {
-    if (!currentPaper || isRehydratingRef.current) return;
+    if (!currentPaper || currentPdfUrl || isRehydratingRef.current) return;
     isRehydratingRef.current = true;
     rehydrateUrls().finally(() => { isRehydratingRef.current = false; });
-  }, [currentPaper?.id]);
+  }, [currentPaper?.id, currentPaper?.storage_path, currentPdfUrl]);
 
   // @ts-ignore - AI SDK v6 API mismatch
   const { messages, sendMessage, status, stop } = useChat({
@@ -477,10 +501,18 @@ function HomeContent() {
 
     // ── RAG 模式：选中了文献时走 FastAPI RAG 接口 ───────────────────────────
     if (selectedContextPapers.length > 0) {
+      if (!apiKey.trim() || !modelName.trim()) {
+        setShowApiKeyToast(true);
+        openSettings();
+        setTimeout(() => setShowApiKeyToast(false), 3000);
+        return;
+      }
       const query = input.trim();
       setInput("");
       const userMsgId = `rag-user-${Date.now()}`;
       const assistantMsgId = `rag-assistant-${Date.now()}`;
+      getMessageOrder(userMsgId);
+      getMessageOrder(assistantMsgId);
 
       // Optimistically add user message
       setRagMessages((prev) => [
@@ -498,6 +530,7 @@ function HomeContent() {
         const result = await chatWithRag(
           selectedContextPapers.map((p) => p.id),
           query,
+          { apiKey, baseUrl, modelName },
         );
         // Update assistant message with answer + sources
         setRagMessages((prev) =>
@@ -528,6 +561,7 @@ function HomeContent() {
       return;
     }
     if (input.trim()) {
+      reserveAiMessageOrders();
       sendMessage({ text: input }, { body: { apiKey, baseUrl, modelName, systemPrompt } });
       setInput("");
     }
@@ -965,7 +999,9 @@ function HomeContent() {
                       </div>
                     </div>
                   )}
-                  {[...ragMessages, ...messages].map((msg: any) => {
+                  {[...ragMessages, ...messages]
+                    .sort((a: any, b: any) => getMessageOrder(a.id) - getMessageOrder(b.id))
+                    .map((msg: any) => {
                     const textContent = typeof msg.content === 'string' ? msg.content : (msg.parts?.find((p: any) => p.type === 'text') as any)?.text || '';
                     // 过滤 <think> 推理标签（流式传输中断时也可能缺少闭合标签）
                     const displayContent = textContent.replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, "");
@@ -1033,7 +1069,7 @@ function HomeContent() {
                                 ),
                                 td: ({ children }) => (
                                   <td className="px-4 py-2 border border-slate-200 text-xs text-slate-600 min-w-[120px]">
-                                    {children}
+                                    {renderWithCitations(children, msgSources)}
                                   </td>
                                 ),
                                 h1: ({ children }) => (
@@ -1063,7 +1099,7 @@ function HomeContent() {
                                   <ol className="ml-5 space-y-1">{children}</ol>
                                 ),
                                 li: ({ children }) => (
-                                  <li className="text-[13px] leading-[1.7] text-slate-700">{children}</li>
+                                  <li className="text-[13px] leading-[1.7] text-slate-700">{renderWithCitations(children, msgSources)}</li>
                                 ),
                                 hr: () => (
                                   <hr className="my-6 border-slate-200" />
