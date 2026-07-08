@@ -58,9 +58,7 @@ This is the current PDF processing and RAG backend.
   - Retrieve chunks through Supabase RPC `match_paper_chunks`.
   - Generate cited answers through MiniMax.
 - Env sample: `paper-backend/.env.example`
-  - Currently mentions `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
-  - Code actually reads `SUPABASE_URL`, `SUPABASE_KEY`, `MINIMAX_API_KEY`, `MINIMAX_GROUP_ID`.
-  - This mismatch should be fixed.
+  - Matches the variables read by `paper-backend`: `SUPABASE_URL`, `SUPABASE_KEY`, `MINIMAX_API_KEY`, `MINIMAX_GROUP_ID`.
 
 ## Backend Difference
 
@@ -297,12 +295,7 @@ Code reads:
 - `MINIMAX_API_KEY`
 - `MINIMAX_GROUP_ID`
 
-The sample currently mentions:
-
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-
-This can cause new setup failures.
+The sample now matches the variables read by the backend service.
 
 ### Missing Database Schema
 
