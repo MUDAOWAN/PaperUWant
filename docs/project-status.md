@@ -4,6 +4,7 @@ Last updated: 2026-07-07
 
 Related docs:
 
+- `docs/required-reading.md`
 - `docs/supabase-checklist.md`
 - `docs/local-chain-check.md`
 
