@@ -2,7 +2,7 @@
 End-to-end RAG pipeline orchestration for PaperUWant.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from services.chat_service import generate_answer
 from services.context_compressor import compress_context
@@ -25,7 +25,7 @@ def answer_question(
     paper_ids: list[str],
     top_k: int,
     api_key: str,
-    base_url: str | None,
+    base_url: Optional[str],
     model_name: str,
 ) -> dict[str, Any]:
     """

@@ -4,7 +4,7 @@ Returns a list of text blocks, each with its content, page number,
 and bounding box coordinates [x0, y0, x1, y1].
 """
 
-from typing import Any
+from typing import Any, Union
 import fitz  # PyMuPDF
 
 
@@ -17,7 +17,7 @@ def _clean_pdf_text(text: str) -> str:
     ).strip()
 
 
-def extract_text_with_bboxes(file_path_or_bytes: str | bytes) -> list[dict[str, Any]]:
+def extract_text_with_bboxes(file_path_or_bytes: Union[str, bytes]) -> list[dict[str, Any]]:
     """
     Parse a PDF and extract text blocks with their physical bounding boxes.
 

@@ -165,7 +165,7 @@ function renderWithCitations(children: React.ReactNode, sources: import("../lib/
 
 function HomeContent() {
   const { user } = useAuthStore();
-  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchFolders, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin, selectedContextPapers, removeContextPaper, setContextPapers, setHighlightTarget } = usePaperStore();
+  const { papers, folders, currentPaper, currentPdfUrl, usedStorageBytes, setCurrentPaper, fetchCloudPapers, rehydrateUrls, isLoadingCloud, fetchUsedStorage, deletePaper, togglePin, selectedContextPapers, removeContextPaper, setContextPapers, setHighlightTarget } = usePaperStore();
   const [rightPanelMode, setRightPanelMode] = useState<"chat" | "notes">("chat");
   const [isLeftCollapsed, setIsLeftCollapsed] = useState(false);
   const [isRightCollapsed, setIsRightCollapsed] = useState(false);
@@ -439,19 +439,16 @@ function HomeContent() {
   // Rehydrate ref to prevent concurrent calls
   const isRehydratingRef = useRef(false);
 
-  // Fetch cloud papers & folders — runs on mount + whenever user changes
+  // AuthProvider owns initial papers/folders loading. Keep storage usage separate
+  // here so the page does not duplicate the initial Supabase requests.
   useEffect(() => {
     if (!user?.id) {
       return;
     }
-    Promise.all([
-      fetchCloudPapers(user.id),
-      fetchFolders(user.id),
-      fetchUsedStorage(user.id),
-    ]).catch((err) => {
-      console.error("[page] 拉取用户数据失败:", err);
+    fetchUsedStorage(user.id).catch((err) => {
+      console.error("[page] 拉取容量统计失败:", err);
     });
-  }, [user?.id]);
+  }, [user?.id, fetchUsedStorage]);
 
   // Rehydrate signed URL when currentPaper id changes (use stable id, not object ref)
   useEffect(() => {

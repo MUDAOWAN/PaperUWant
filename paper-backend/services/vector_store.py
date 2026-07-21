@@ -5,7 +5,7 @@ Vector store: MiniMax embedding API -> Supabase paper_chunks table.
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -113,7 +113,7 @@ def process_and_store_chunks(
     paper_id: str,
     blocks: list[dict[str, Any]],
     *,
-    executor: ThreadPoolExecutor | None = None,
+    executor: Optional[ThreadPoolExecutor] = None,
 ) -> int:
     """
     Embed parsed PDF text blocks and insert them into Supabase paper_chunks.

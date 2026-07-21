@@ -59,6 +59,7 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
   const { currentPaper, setCurrentPaper, highlightTarget } = usePaperStore();
 
   const [numPages, setNumPages] = useState<number | null>(null);
+  const [visiblePageCount, setVisiblePageCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selection, setSelection] = useState<{ text: string; rect: DOMRect } | null>(null);
@@ -112,15 +113,32 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
   }, [url, numPages, targetPaperId, targetPageNumber, currentPaper?.id]);
 
   useEffect(() => {
+    setNumPages(null);
+    setVisiblePageCount(0);
+    setPageSizes([]);
+    setError(null);
+    setLoading(Boolean(url));
+  }, [url]);
+
+  useEffect(() => {
+    if (!numPages || loading || error) return;
+    if (visiblePageCount >= numPages) return;
+
+    const nextCount = Math.min(numPages, Math.max(visiblePageCount + 2, 3));
     const timer = window.setTimeout(() => {
-      setNumPages(null);
-      setPageSizes([]);
-      setError(null);
-      setLoading(Boolean(url));
-    }, 0);
+      setVisiblePageCount(nextCount);
+    }, 80);
 
     return () => window.clearTimeout(timer);
-  }, [url]);
+  }, [numPages, visiblePageCount, loading, error]);
+
+  useEffect(() => {
+    if (!targetPageNumber) return;
+    const nextCount = numPages
+      ? Math.min(numPages, targetPageNumber)
+      : targetPageNumber;
+    setVisiblePageCount((prev) => Math.max(prev, nextCount));
+  }, [targetPageNumber, targetTimestamp, numPages]);
 
   const handleMouseUp = useCallback(() => {
     const selectionObj = window.getSelection();
@@ -153,6 +171,7 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
 
   function onDocumentLoadSuccess({ numPages: np }: { numPages: number }) {
     setNumPages(np);
+    setVisiblePageCount(Math.min(np, 3));
     setLoading(false);
     setError(null);
   }
@@ -225,6 +244,15 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
     );
   }
 
+  if (!url && currentPaper) {
+    return (
+      <div className="h-full bg-[#525659] flex flex-col items-center justify-center text-slate-300">
+        <div className="h-8 w-8 border-3 border-slate-300/50 border-t-indigo-400 rounded-full animate-spin mb-4" />
+        <p className="text-sm">正在准备 PDF 链接...</p>
+      </div>
+    );
+  }
+
   if (!url) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-slate-400 bg-[#F9FAFB]">
@@ -243,10 +271,10 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
         onAddToNotes={handleAddToNotes}
       />
 
-      {loading && (
-        <div className="flex flex-col items-center justify-center py-20">
-          <div className="h-8 w-8 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4" />
-          <p className="text-sm text-slate-400">Loading PDF...</p>
+      {loading && !error && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#525659]">
+          <div className="h-8 w-8 border-3 border-slate-300/50 border-t-indigo-400 rounded-full animate-spin mb-4" />
+          <p className="text-sm text-slate-300">正在加载 PDF...</p>
         </div>
       )}
 
@@ -262,21 +290,22 @@ export default function PdfViewer({ url, onExplain, onAddToNotes }: PdfViewerPro
           file={url}
           onLoadSuccess={onDocumentLoadSuccess}
           onLoadError={onDocumentLoadError}
-          loading={
-            <div className="flex flex-col items-center justify-center py-20">
-              <div className="h-8 w-8 border-3 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mb-4" />
-              <p className="text-sm text-slate-400">Loading PDF...</p>
-            </div>
-          }
+          loading={null}
           className="flex flex-col items-center"
         >
-          {Array.from(new Array(numPages || 0), (_el, index) => {
+          {Array.from(new Array(visiblePageCount || 0), (_el, index) => {
             const pageNum = index + 1;
             return renderPage(pageNum, pageSizes[index]);
           })}
         </Document>
 
-        {numPages && !loading && !error && (
+        {numPages && visiblePageCount < numPages && !loading && !error && (
+          <div className="py-2 text-xs text-slate-300">
+            正在渲染剩余页面 {visiblePageCount}/{numPages}
+          </div>
+        )}
+
+        {numPages && visiblePageCount >= numPages && !loading && !error && (
           <div className="py-4 text-xs text-slate-400">
             {numPages} {numPages === 1 ? "page" : "pages"}
           </div>

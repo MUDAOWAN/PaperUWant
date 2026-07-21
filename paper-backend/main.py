@@ -2,7 +2,7 @@
 PaperUWant FastAPI backend: PDF spatial parsing and RAG service.
 """
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +48,7 @@ class ChatRequest(BaseModel):
     paper_ids: list[str]
     top_k: int = 12
     api_key: str
-    base_url: str | None = None
+    base_url: Optional[str] = None
     model_name: str
 
 

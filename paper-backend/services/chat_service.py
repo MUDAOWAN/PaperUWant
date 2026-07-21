@@ -9,7 +9,7 @@ the user's OpenAI-compatible chat API configuration from the frontend.
 import json
 import os
 import re
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ def _get_supabase() -> Client:
     return create_client(url, key)
 
 
-def _fetch_query_embedding(query: str) -> list[float] | None:
+def _fetch_query_embedding(query: str) -> Optional[list[float]]:
     """Embed a query string using MiniMax embedding API."""
     api_key = os.getenv("MINIMAX_API_KEY", "").strip()
     group_id = os.getenv("MINIMAX_GROUP_ID", "").strip()
@@ -178,7 +178,7 @@ def _build_rag_messages(query: str, contexts: list[dict[str, Any]]) -> list[dict
     ]
 
 
-def _normalise_chat_base_url(base_url: str | None) -> str:
+def _normalise_chat_base_url(base_url: Optional[str]) -> str:
     clean_base_url = (base_url or "").strip().rstrip("/")
     return clean_base_url or DEFAULT_CHAT_BASE_URL
 
@@ -188,7 +188,7 @@ def generate_answer(
     contexts: list[dict[str, Any]],
     *,
     api_key: str,
-    base_url: str | None,
+    base_url: Optional[str],
     model_name: str,
 ) -> dict[str, Any]:
     """

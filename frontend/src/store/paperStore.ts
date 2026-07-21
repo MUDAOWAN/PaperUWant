@@ -29,6 +29,136 @@ export interface HighlightTarget {
   timestamp: number;
 }
 
+interface SignedUrlEntry {
+  id: string;
+  signedUrl: string;
+}
+
+const signedUrlCache = new Map<string, string>();
+const signedUrlRequests = new Map<string, Promise<string | null>>();
+
+async function createSingleSignedUrl(path: string): Promise<string | null> {
+  const cached = signedUrlCache.get(path);
+  if (cached) return cached;
+
+  const existingRequest = signedUrlRequests.get(path);
+  if (existingRequest) return existingRequest;
+
+  const request = supabase.storage
+    .from("PaperUWant_PDFS")
+    .createSignedUrl(path, 3600)
+    .then(({ data, error }) => {
+      if (error || !data?.signedUrl) return null;
+      signedUrlCache.set(path, data.signedUrl);
+      return data.signedUrl;
+    })
+    .finally(() => {
+      signedUrlRequests.delete(path);
+    });
+
+  signedUrlRequests.set(path, request);
+  return request;
+}
+
+async function createSignedUrlEntries(papers: Paper[]): Promise<Array<SignedUrlEntry | null>> {
+  if (!papers.length) return [];
+
+  const bucket = supabase.storage.from("PaperUWant_PDFS");
+  const cachedEntries = new Map(
+    papers
+      .filter((paper) => paper.storage_path && signedUrlCache.has(paper.storage_path))
+      .map((paper) => [
+        paper.id,
+        signedUrlCache.get(paper.storage_path as string) as string,
+      ])
+  );
+  const pendingPapers = papers.filter(
+    (paper) => paper.storage_path && !signedUrlCache.has(paper.storage_path)
+  );
+  const paths = pendingPapers
+    .map((paper) => paper.storage_path)
+    .filter((path): path is string => Boolean(path));
+
+  if (!paths.length) {
+    return papers.map((paper) => {
+      const signedUrl = cachedEntries.get(paper.id);
+      return signedUrl ? { id: paper.id, signedUrl } : null;
+    });
+  }
+
+  const maybeBatchBucket = bucket as typeof bucket & {
+    createSignedUrls?: (
+      paths: string[],
+      expiresIn: number
+    ) => Promise<{
+      data: Array<{ path?: string | null; signedUrl?: string | null }> | null;
+      error: { message?: string } | null;
+    }>;
+  };
+
+  if (typeof maybeBatchBucket.createSignedUrls === "function") {
+    try {
+      const batchRequest = maybeBatchBucket
+        .createSignedUrls(paths, 3600)
+        .then(({ data, error }) => {
+          if (error || !data?.length) return new Map<string, string>();
+          const signedUrlByPath = new Map(
+            data
+              .filter((entry) => entry.path && entry.signedUrl)
+              .map((entry) => [entry.path as string, entry.signedUrl as string])
+          );
+
+          signedUrlByPath.forEach((signedUrl, path) => {
+            signedUrlCache.set(path, signedUrl);
+          });
+
+          return signedUrlByPath;
+        })
+        .finally(() => {
+          paths.forEach((path) => signedUrlRequests.delete(path));
+        });
+
+      paths.forEach((path) => {
+        signedUrlRequests.set(
+          path,
+          batchRequest.then((signedUrlByPath) => signedUrlByPath.get(path) ?? null)
+        );
+      });
+
+      const signedUrlByPath = await batchRequest;
+      if (signedUrlByPath.size) {
+        return papers.map((paper) => {
+          const signedUrl = paper.storage_path
+            ? cachedEntries.get(paper.id) ?? signedUrlByPath.get(paper.storage_path)
+            : undefined;
+          return signedUrl ? { id: paper.id, signedUrl } : null;
+        });
+      }
+    } catch (err) {
+      console.warn("[paperStore] batch PDF URL prefetch failed, falling back:", err);
+    }
+  }
+
+  const fallbackEntries = await Promise.all(
+    pendingPapers.map(async (paper) => {
+      if (!paper.storage_path) return null;
+      const signedUrl = await createSingleSignedUrl(paper.storage_path);
+      return signedUrl ? { id: paper.id, signedUrl } : null;
+    })
+  );
+
+  const fallbackByPaperId = new Map(
+    fallbackEntries
+      .filter((entry): entry is SignedUrlEntry => Boolean(entry))
+      .map((entry) => [entry.id, entry.signedUrl])
+  );
+
+  return papers.map((paper) => {
+    const signedUrl = cachedEntries.get(paper.id) ?? fallbackByPaperId.get(paper.id);
+    return signedUrl ? { id: paper.id, signedUrl } : null;
+  });
+}
+
 interface PaperState {
   folders: Folder[];
   papers: Paper[];
@@ -220,6 +350,41 @@ export const usePaperStore = create<PaperState>()(
           }));
 
           set({ papers: cloudPapers });
+
+          const papersToHydrate = cloudPapers.filter((paper) => paper.storage_path);
+          void createSignedUrlEntries(papersToHydrate)
+            .then((entries) => {
+              const urlByPaperId = new Map(
+                entries
+                  .filter((entry): entry is SignedUrlEntry => Boolean(entry))
+                  .map((entry) => [entry.id, entry.signedUrl])
+              );
+
+              if (!urlByPaperId.size) return;
+
+              set((state) => {
+                const papers = state.papers.map((paper) => {
+                  const signedUrl = urlByPaperId.get(paper.id);
+                  return signedUrl ? { ...paper, pdf_url: signedUrl } : paper;
+                });
+
+                const currentPaperUrl = state.currentPaper
+                  ? urlByPaperId.get(state.currentPaper.id)
+                  : undefined;
+                const currentPaper = currentPaperUrl && state.currentPaper
+                  ? { ...state.currentPaper, pdf_url: currentPaperUrl }
+                  : state.currentPaper;
+                const currentPdfUrl =
+                  currentPaperUrl && !state.currentPdfUrl
+                    ? currentPaperUrl
+                    : state.currentPdfUrl;
+
+                return { papers, currentPaper, currentPdfUrl };
+              });
+            })
+            .catch((err) => {
+              console.error("[paperStore] prefetch PDF URLs exception:", err);
+            });
         } catch (err) {
           console.error("[paperStore] fetchCloudPapers exception:", err);
         } finally {
@@ -243,20 +408,18 @@ export const usePaperStore = create<PaperState>()(
         }
 
         try {
-          const { data, error } = await supabase.storage
-            .from("PaperUWant_PDFS")
-            .createSignedUrl(currentPaper.storage_path, 3600);
+          const signedUrl = await createSingleSignedUrl(currentPaper.storage_path);
 
-          if (error || !data?.signedUrl) {
+          if (!signedUrl) {
             set({ currentPaper: { ...currentPaper, pdf_url: "" }, currentPdfUrl: null });
             return;
           }
 
-          const updated: Paper = { ...currentPaper, pdf_url: data.signedUrl };
+          const updated: Paper = { ...currentPaper, pdf_url: signedUrl };
           const updatedPapers = papers.map((p) =>
             p.id === updated.id ? updated : p
           );
-          set({ currentPaper: updated, currentPdfUrl: data.signedUrl, papers: updatedPapers });
+          set({ currentPaper: updated, currentPdfUrl: signedUrl, papers: updatedPapers });
         } catch {
           set({ currentPaper: { ...currentPaper, pdf_url: "" }, currentPdfUrl: null });
         }

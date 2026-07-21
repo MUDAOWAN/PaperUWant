@@ -13,6 +13,7 @@ export default function UpdatePasswordPage() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("您的密码已成功更新");
   const [isHydrated, setIsHydrated] = useState(false);
 
   // Check if user has a valid session (they should arrive via email link)
@@ -43,6 +44,15 @@ export default function UpdatePasswordPage() {
     return true;
   };
 
+  const isSamePasswordError = (message: string): boolean => {
+    const lower = message.toLowerCase();
+    return lower.includes("password") && (
+      lower.includes("same") ||
+      lower.includes("different") ||
+      lower.includes("unchanged")
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
@@ -56,8 +66,15 @@ export default function UpdatePasswordPage() {
       });
 
       if (updateError) {
+        if (isSamePasswordError(updateError.message)) {
+          setSuccessMessage("该密码已是当前密码，当前账号已登录");
+          setIsSuccess(true);
+          toast.success("当前账号已登录");
+          return;
+        }
         setError(updateError.message);
       } else {
+        setSuccessMessage("您的密码已成功更新");
         setIsSuccess(true);
         toast.success("密码修改成功！");
       }
@@ -81,8 +98,8 @@ export default function UpdatePasswordPage() {
               <div className="flex items-center justify-center w-14 h-14 mb-4 bg-teal-50 rounded-full">
                 <CheckCircle className="h-7 w-7 text-teal-500" />
               </div>
-              <h2 className="text-base font-bold text-slate-900 mb-1">密码已修改！</h2>
-              <p className="text-xs text-slate-500 mb-5">您的密码已成功更新</p>
+              <h2 className="text-base font-bold text-slate-900 mb-1">密码状态已确认</h2>
+              <p className="text-xs text-slate-500 mb-5">{successMessage}</p>
             </div>
             <button
               onClick={() => router.push("/")}
